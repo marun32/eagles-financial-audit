@@ -1,0 +1,27 @@
+{
+  "version": "7",
+  "dialect": "sqlite",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "6",
+      "when": 1792882084122,
+      "tag": "0000_misty_christian_walker",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "6",
+      "when": 1792883616157,
+      "tag": "0001_lovely_miek",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1792883705004,
+      "tag": "0002_chemical_martin_li",
+      "breakpoints": true
+    }
+  ]
+}

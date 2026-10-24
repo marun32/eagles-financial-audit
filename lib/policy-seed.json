@@ -1,0 +1,275 @@
+[
+  {
+    "section_id": "EXP-0",
+    "title": "Definitions",
+    "body": "- **Claim:** A request to recognize and reimburse a player-paid expense for one team-season.\n- **Claimant:** The rostered player submitting the claim.\n- **Payer:** The player who paid the expense, has a valid roster membership in the same team-season, and would receive any approved reimbursement credit.\n- **Receipt:** An image or PDF containing evidence of the merchant, transaction date, purchased items, and total where available.\n- **Team-season:** One Eagles team participating in one configured Spring or Fall season.\n- **Completed match:** A match whose application status is `COMPLETED` and whose actual completion date has been recorded.\n- **Claim deadline:** The inclusive calendar date three calendar months after the final completed match date.\n- **Treasurer review:** A human decision that may approve, reject, request clarification, or adjust a claim with an audit reason.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-1",
+    "title": "Claimant Eligibility",
+    "body": "Any player with a valid roster membership for a team-season may submit a claim for that team-season. Claim eligibility does not depend on match attendance or games played.\n\nThe payer must also have a valid roster membership in the same team-season. The claimant and payer may differ, but that relationship always requires treasurer review. A missing or unresolved payer remains `UNASSIGNED` and blocks approval; an identified payer outside the selected team-season is invalid.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-2",
+    "title": "Team-Season Association",
+    "body": "A claim applies to one team-season as a whole and is not allocated to a particular match. The claimant must select a team-season for which the claimant has a valid roster membership.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-3",
+    "title": "Expense and Submission Dates",
+    "body": "The expense must relate to the selected team-season. An expense date outside the configured season dates requires treasurer review.\n\nNew claims are accepted through the claim deadline, inclusive. The claim deadline is three calendar months after the actual date of the final completed match for the team-season. Cancelled matches do not extend the deadline. A claim submitted after the deadline is rejected as late and is not silently backdated.\n\nCalendar-month arithmetic preserves the day number where possible. If the destination month has no matching day, the deadline is the last calendar day of that month. The application-recorded submission timestamp is converted to the fixed MVP club time zone, `America/New_York`, and its resulting local date is used for deadline enforcement.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-4",
+    "title": "Required Claim Information",
+    "body": "Every submitted claim must identify:\n\n- Claimant and payer\n- Team-season\n- Expense date\n- Amount and USD currency\n- Category\n- Description\n\nA receipt image or PDF is optional for submission, but receipt status affects the approval path.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-5",
+    "title": "Automatic Approval",
+    "body": "A player-paid claim is automatically approved only when all of the following are true:\n\n1. The submitted amount is strictly less than `$50.00`.\n2. A readable receipt is present.\n3. The submitted and extracted receipt information agree sufficiently for validation.\n4. No alcohol item or alcohol category is detected.\n5. The claimant and payer are the same rostered player.\n6. No duplicate suspicion, invalid field, payer ambiguity, membership problem, or unresolved policy issue exists.\n\nExactly `$50.00` is not below the threshold and therefore requires treasurer review.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-6",
+    "title": "Mandatory Treasurer Review",
+    "body": "A claim requires treasurer review when any of the following applies:\n\n- The amount is `$50.00` or more.\n- The receipt is absent or unreadable.\n- Alcohol is involved.\n- Submitted and extracted values conflict.\n- The claimant and payer differ, even when both are valid rostered players.\n- The payer or team-season association is ambiguous.\n- The claim may duplicate another submission.\n- Required information is missing or invalid.\n- Policy evidence is unavailable or inconclusive.\n\nA review requirement is not an automatic rejection.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-7",
+    "title": "Categories",
+    "body": "The MVP does not automatically prohibit an expense category. Alcohol and personal equipment are not automatically rejected. Alcohol always requires treasurer review; other categories follow the ordinary receipt, amount, validation, and duplicate rules.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-8",
+    "title": "Duplicate Handling",
+    "body": "Duplicate detection uses available evidence such as receipt hash, amount, payer, vendor, date, and line items. Duplicate suspicion creates a review flag and supporting evidence. It does not automatically reject the claim.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-9",
+    "title": "Treasurer Decisions",
+    "body": "For a reviewed claim, an authorized treasurer may approve, reject, request clarification, or approve an adjusted reimbursable amount. Adjustments and overrides require an audit record identifying the actor, timestamp, reason, original value, and approved value.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-10",
+    "title": "Auditability",
+    "body": "The original submission, receipt metadata, extraction result, deterministic findings, retrieved policy citations, model recommendation, and human decision must remain traceable. Approval of a claim does not by itself finalize the team-season settlement.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-11",
+    "title": "Insufficient Evidence and Policy Silence",
+    "body": "If the active policy corpus does not answer a material compliance question, the agent must return `INSUFFICIENT_EVIDENCE` and route the claim to treasurer review. The agent must not create a new restriction, approval rule, exception, or reimbursement amount from general model knowledge.\n\nA treasurer may resolve the individual claim with a recorded reason. That decision does not become a new club policy unless an authorized administrator activates a new versioned policy or rule configuration.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-12",
+    "title": "Policy Precedence",
+    "body": "For the MVP:\n\n1. This expense policy controls claimant eligibility, submission requirements, receipt handling, automatic approval, and review routing.\n2. The Eagles Settlement and Allocation Policy controls allocation, reimbursement credits, finalization, and amendments.\n3. The applicable LCCL or WMCL fee schedule controls the league-fee amount for its named team.\n4. Active versioned database configuration implements these policies and must identify the policy versions from which it was derived.\n\nIf active documents or configuration conflict, processing stops with a blocking configuration finding. The model does not select which conflicting rule to apply.",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "EXP-13",
+    "title": "Non-Normative Examples",
+    "body": "These examples illustrate the rules but do not replace them:\n\n| Example claim | Expected initial result | Governing sections |\n|---|---|---|\n| `$42.00`, readable receipt, non-alcohol, no other flags | `AUTO_APPROVED` | `EXP-5` |\n| `$42.00`, no receipt | `PENDING_REVIEW` | `EXP-6` |\n| `$30.00`, alcohol present | `PENDING_REVIEW`, not automatic rejection | `EXP-6`, `EXP-7` |\n| `$35.00`, personal equipment, readable receipt, no other flags | `AUTO_APPROVED` | `EXP-5`, `EXP-7` |\n| `$50.00`, readable receipt, non-alcohol | `PENDING_REVIEW` | `EXP-5`, `EXP-6` |\n| Claim submitted by one rostered player for a different rostered payer | `PENDING_REVIEW` | `EXP-1`, `EXP-6` |\n| Otherwise valid claim submitted one day after the deadline | Rejected as late before agent processing | `EXP-3` |",
+    "policy_type": "expense",
+    "version": 1
+  },
+  {
+    "section_id": "SET-0",
+    "title": "Definitions",
+    "body": "- **Team-season expense pool:** The approved costs allocated within one team and one season.\n- **System expense:** A club-paid league or umpire expense generated from active configuration rather than submitted by a player.\n- **Weighted units:** Games played multiplied by the configured multiplier for that games-played range.\n- **Weighted charge:** A player's allocated share of the team-season expense pool before credits.\n- **Reimbursement credit:** The full approved amount of a player-paid claim credited to its payer after weighted allocation.\n- **Net balance:** Weighted charge minus reimbursement credits.\n- **Finalized settlement:** An immutable, treasurer-approved settlement version created after the claim window closes and all invariants pass.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-1",
+    "title": "Team-Season Expense Pool",
+    "body": "Each team-season has an independent expense pool:\n\n```text\nteam_season_expense_pool\n  = configured_league_fee\n  + generated_umpire_fees_for_completed_matches\n  + approved_player_paid_claims\n```\n\nPending, rejected, unresolved, unassigned, or late claims are excluded from the pool.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-2",
+    "title": "System-Generated Expenses",
+    "body": "The league fee is generated once for each team-season. An umpire fee is generated once for each completed match. These expenses are club-paid, automatically approved system expenses and never create a player reimbursement.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-3",
+    "title": "Attendance Multipliers",
+    "body": "The initial allocation tiers are:\n\n| Games played | Multiplier |\n|---:|---:|\n| 0 | 0.00 |\n| 1 | 0.50 |\n| 2–3 | 0.75 |\n| 4–6 | 1.00 |\n| 7–10 | 1.25 |\n\nThe tiers are versioned administrative configuration. An active rule set must cover every possible games-played count without gaps or overlaps.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-4",
+    "title": "Weighted Allocation",
+    "body": "For each rostered player `p` in a team-season:\n\n```text\nweighted_units(p)\n  = games_played(p) * multiplier(games_played(p))\n\nweighted_unit_rate\n  = team_season_expense_pool / sum(weighted_units(all rostered players))\n\nweighted_charge(p)\n  = weighted_unit_rate * weighted_units(p)\n```\n\nA zero-game player has zero weighted units and therefore receives no weighted expense charge.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-5",
+    "title": "Reimbursement After Allocation",
+    "body": "Weighted charges are calculated before player reimbursements are applied. An approved player-paid claim remains in the team-season expense pool and is credited in full to its payer after allocation.\n\n```text\ncredits(p)\n  = approved_player_paid_claims(p)\n\nnet_balance(p)\n  = weighted_charge(p) - credits(p)\n```\n\nA rostered zero-game player may receive reimbursement for an approved claim even though that player's weighted charge is zero.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-6",
+    "title": "Balance Meaning",
+    "body": "- A positive net balance means the player owes the pool.\n- A negative net balance means the player is owed reimbursement.\n- The club pool is represented as the ledger counterparty so total debits and credits balance.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-7",
+    "title": "Currency and Rounding",
+    "body": "All MVP team-seasons use USD. Calculations use integer cents rather than binary floating-point values. Residual cents are assigned using a deterministic largest-remainder method with a stable player-ID tie-breaker.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-8",
+    "title": "Claim Window and Finalization",
+    "body": "Claims may be reviewed and provisional settlements may be calculated while the claim window remains open. A settlement cannot be finalized until:\n\n1. The current `America/New_York` calendar date is greater than the inclusive claim-deadline date. For example, an August 30 deadline permits finalization beginning August 31.\n2. Every blocking claim or data issue is resolved.\n3. Financial invariants pass.\n4. An authorized treasurer approves finalization.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-9",
+    "title": "Versioning and Amendments",
+    "body": "A finalized settlement is immutable and retains its configuration, allocation-rule, approval-rule, and policy versions. A later correction creates a successor amendment and does not rewrite the original settlement.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-10",
+    "title": "Required Reconciliation Invariants",
+    "body": "Before finalization:\n\n- Each league and completed-match umpire fee exists exactly once.\n- Total weighted units are greater than zero; a zero total blocks calculation and finalization.\n- Weighted charges sum to the complete approved team-season pool after deterministic cent allocation.\n- Reimbursement credits equal the approved player-paid claims.\n- No pending, rejected, unresolved, unassigned, or late claim affects balances.\n- Ledger debits equal ledger credits when the club counterparty is included.\n- Re-running identical versioned inputs produces identical results.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-11",
+    "title": "Insufficient Evidence and Configuration Conflict",
+    "body": "If required attendance, roster, fee, claim, deadline, policy-version, or allocation configuration is absent or contradictory, calculation stops with a blocking finding. The model must not estimate a missing amount, attendance value, multiplier, deadline, or balance.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-12",
+    "title": "Policy Precedence",
+    "body": "For the MVP:\n\n1. The applicable LCCL or WMCL fee schedule controls the league-fee amount for its named team.\n2. The Eagles Expense Policy controls whether a player-paid claim is eligible and approved for inclusion.\n3. This policy controls pool construction, weighted allocation, credits, rounding, finalization, and amendments.\n4. Active versioned database configuration implements these documents and must retain their version identifiers.\n\nAny unresolved conflict blocks finalization and requires an authorized configuration correction or new policy version. A model recommendation cannot resolve a policy conflict.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-13",
+    "title": "Non-Normative Examples",
+    "body": "These examples illustrate the rules but do not replace them:\n\n1. If an Eagles-LCCL team-season completes all 10 matches and has no approved player-paid claims, its pool is `$1,250.00`: a `$650.00` league fee plus 10 umpire fees of `$60.00`.\n2. If that team-season also has `$250.00` in approved player-paid claims, the pool is `$1,500.00`. With `126.00` total weighted units, deterministic code calculates the unit rate and allocates all `150,000` cents using the largest-remainder rule.\n3. A rostered player with zero games and an approved `$80.00` player-paid claim receives no weighted charge and an `$80.00` reimbursement credit, producing a net balance of `-$80.00`.\n4. A fully reviewed settlement remains provisional until its three-calendar-month claim window closes.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "SET-14",
+    "title": "Deferred Prior-Payment Tracking",
+    "body": "Prior-payment credits are outside the MVP policy and do not affect the version 1.0 settlement formula. If the club later needs to record payments already collected from players, that capability requires a separately approved policy and versioned product change covering authorization, evidence, reversals, duplicate prevention, and player visibility.",
+    "policy_type": "settlement",
+    "version": 1
+  },
+  {
+    "section_id": "LCCL-FEE-1",
+    "title": "League Fee",
+    "body": "Eagles-LCCL incurs one `$650.00` league fee in each configured 2026 team-season.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "LCCL-FEE-2",
+    "title": "Scheduled Matches",
+    "body": "Each Eagles-LCCL team-season is configured for 10 scheduled matches.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "LCCL-FEE-3",
+    "title": "Umpire Fee",
+    "body": "The club incurs one `$60.00` umpire fee for each match whose status is `COMPLETED`. Cancelled matches do not incur an umpire fee. A postponed match incurs the fee only when it is completed.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "LCCL-FEE-4",
+    "title": "Generation and Approval",
+    "body": "League and umpire fees are generated by the application with uniqueness controls. They are club-paid, automatically approved system expenses and participate in the team-season expense pool.\n\nIf all 10 scheduled matches are completed, fixed system expenses equal `$1,250.00`: `$650.00` league fee plus `$600.00` in umpire fees.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "LCCL-FEE-5",
+    "title": "Precedence and Missing Information",
+    "body": "This schedule controls the Eagles-LCCL league-fee amount. The Eagles Settlement and Allocation Policy controls how the fee enters the pool and is allocated. Any conflict or missing active version blocks settlement calculation; the agent does not infer a replacement fee.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "WMCL-FEE-1",
+    "title": "League Fee",
+    "body": "Eagles-WMCL incurs one `$975.00` league fee in each configured 2026 team-season.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "WMCL-FEE-2",
+    "title": "Scheduled Matches",
+    "body": "Each Eagles-WMCL team-season is configured for 10 scheduled matches.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "WMCL-FEE-3",
+    "title": "Umpire Fee",
+    "body": "The club incurs one `$60.00` umpire fee for each match whose status is `COMPLETED`. Cancelled matches do not incur an umpire fee. A postponed match incurs the fee only when it is completed.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "WMCL-FEE-4",
+    "title": "Generation and Approval",
+    "body": "League and umpire fees are generated by the application with uniqueness controls. They are club-paid, automatically approved system expenses and participate in the team-season expense pool.\n\nIf all 10 scheduled matches are completed, fixed system expenses equal `$1,575.00`: `$975.00` league fee plus `$600.00` in umpire fees.",
+    "policy_type": "league",
+    "version": 1
+  },
+  {
+    "section_id": "WMCL-FEE-5",
+    "title": "Precedence and Missing Information",
+    "body": "This schedule controls the Eagles-WMCL league-fee amount. The Eagles Settlement and Allocation Policy controls how the fee enters the pool and is allocated. Any conflict or missing active version blocks settlement calculation; the agent does not infer a replacement fee.",
+    "policy_type": "league",
+    "version": 1
+  }
+]
