@@ -1,8 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
-import { answerPolicy, extractReceipt } from "../../../lib/ai";
-import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, first, policySearch, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
+import { extractReceipt } from "../../../lib/ai";
+import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, first, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
 import { allocate } from "../../../lib/finance";
-import { runClaimAuditGraph } from "../../../lib/audit-graph";
+import { executeClaimAudit } from "../../../lib/claim-audit-service";
+import { runPolicyQuestion } from "../../../lib/policy-qa";
 
 export const runtime = "edge";
 type Context = { params: Promise<{ path: string[] }> };
@@ -203,19 +204,7 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
     return json({ uploaded: true, extraction }, 201);
   }
   if (path[0] === "claims" && path[2] === "audit") {
-    const claim = await claimOr404(path[1]); await assertTeamAccess(actor, claim.team_season_id);
-    if (actor.role === "player" && actor.player_id !== claim.claimant_id) throw new HttpError(403, "Claim access denied");
-    if (["APPROVED", "REJECTED"].includes(claim.status)) return json({ id: claim.id, status: claim.status, route: claim.route });
-    const duplicate = await first("SELECT id FROM claims WHERE id<>? AND team_season_id=? AND payer_id=? AND amount_cents=? AND vendor=? AND expense_date=? LIMIT 1", claim.id, claim.team_season_id, claim.payer_id, claim.amount_cents, claim.vendor, claim.expense_date);
-    const extraction = claim.receipt_extraction_json ? JSON.parse(claim.receipt_extraction_json) as { status?: string; fields?: Record<string, unknown> } : null;
-    const { result, steps } = await runClaimAuditGraph(claim, !!duplicate, extraction);
-    const status = result.route === "AUTO_APPROVE" ? "APPROVED" : "NEEDS_REVIEW";
-    const runId = uuid();
-    await database().batch([
-      database().prepare("UPDATE claims SET status=?,route=?,findings_json=?,policy_citations_json=?,approved_amount_cents=?,updated_at=? WHERE id=?").bind(status, result.route, JSON.stringify(result.findings), JSON.stringify(result.citations), status === "APPROVED" ? claim.amount_cents : null, now(), claim.id),
-      database().prepare("INSERT INTO audit_runs (id,claim_id,stage,route,findings_json,created_at,resolved_at) VALUES (?,?,?,?,?,?,?)").bind(runId, claim.id, status === "APPROVED" ? "COMPLETE" : "WAITING_FOR_TREASURER", result.route, JSON.stringify(result.findings), now(), status === "APPROVED" ? now() : null),
-    ]);
-    return json({ id: claim.id, runId, status, graphSteps: steps, ...result });
+    return json(await executeClaimAudit(path[1], actor));
   }
   if (path[0] === "claims" && path[2] === "decision") {
     requireRole(actor, "admin", "treasurer"); const claim = await claimOr404(path[1]);
@@ -265,8 +254,7 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
   if (path.join("/") === "qa") {
     const input = await body(request); const question = safeText(input.question, 500);
     if (!question) throw new HttpError(400, "Question required");
-    const sections = await policySearch(question);
-    return json({ answer: await answerPolicy(question, sections), citations: sections.map((s) => ({ sectionId: s.section_id, title: s.title, version: s.version })), source: "synthetic Eagles MVP policy", retrieval: sections[0]?.retrieval_method ?? "none" });
+    return json({ ...await runPolicyQuestion(question), source: "synthetic Eagles MVP policy" });
   }
   throw new HttpError(404, "Route not found");
 }

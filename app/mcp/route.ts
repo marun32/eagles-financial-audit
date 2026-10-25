@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { actorFor, HttpError, policySearch, rows, settlementPreview, teamDetail, teamsFor } from "../../lib/data";
-import { answerPolicy } from "../../lib/ai";
+import { actorFor, HttpError, rows, settlementPreview, teamDetail, teamsFor } from "../../lib/data";
+import { runPolicyQuestion } from "../../lib/policy-qa";
 
 export const runtime = "edge";
 const VERSION = "2026-07-28";
@@ -42,8 +42,7 @@ export async function POST(request: NextRequest) {
         data = await rows("SELECT section_id,title,body,policy_type,version FROM policies ORDER BY section_id");
       } else if (name === "answer_policy_question") {
         if (typeof args.question !== "string" || !args.question.trim()) throw new HttpError(400, "question required");
-        const sections = await policySearch(args.question.slice(0, 500));
-        data = { answer: await answerPolicy(args.question.slice(0, 500), sections), citations: sections.map((s) => s.section_id), retrieval: sections[0]?.retrieval_method ?? "none" };
+        data = await runPolicyQuestion(args.question);
       } else throw new HttpError(404, "Unknown tool");
       result = { content: [{ type: "text", text: JSON.stringify(data) }] };
     } else return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });

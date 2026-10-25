@@ -170,7 +170,16 @@ export async function policySearch(question: string) {
   const tokens = question.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) => word.length > 2) ?? [];
   const policies = await rows<{ section_id: string; title: string; body: string; version: number }>("SELECT section_id,title,body,version FROM policies");
   if (!policies.length) return [];
-  const lexical = policies.map((p) => ({ ...p, score: tokens.reduce((n, token) => n + ((`${p.title} ${p.body}`).toLowerCase().includes(token) ? 1 : 0), 0), retrieval_method: "lexical" }));
+  const lexical = policies.map((p) => ({ ...p, score: tokens.reduce((n, token) => n + ((`${p.title} ${p.body}`).toLowerCase().includes(token) ? 1 : 0), 0), retrieval_method: "lexical", selection: "keyword_match" }));
+  const intentIds: string[] = [];
+  if (/\b(who|treasurer|person|role)\b/i.test(question) && /approv|decid|review/i.test(question)) intentIds.push("EXP-5", "EXP-9");
+  if (/\b(max|maximum|limit|cap|threshold)\b/i.test(question)) intentIds.push("EXP-5", "EXP-6", "EXP-11");
+  const anchors = [...new Set(intentIds)].filter((id) => policies.some((p) => p.section_id === id));
+  const select = <T extends { section_id: string; score: number; selection: string }>(ranked: T[]): T[] => {
+    const byId = new Map(ranked.map((item) => [item.section_id, item]));
+    const anchored = anchors.map((id) => byId.get(id)).filter((item): item is T => !!item).map((item) => ({ ...item, selection: "policy_intent" }));
+    return [...anchored, ...ranked.filter((item) => !anchors.includes(item.section_id))].slice(0, 5);
+  };
   if (env.NEBIUS_API_KEY && env.NEBIUS_EMBEDDING_MODEL) {
     try {
       const keyFor = (p: typeof policies[number]) => `${env.NEBIUS_EMBEDDING_MODEL}:${p.section_id}:${p.version}:${p.title}:${p.body}`;
@@ -179,13 +188,13 @@ export async function policySearch(question: string) {
       const vectors = await embedTexts(inputs);
       missing.forEach((p, index) => policyVectorCache.set(keyFor(p), vectors[index + 1]));
       const query = vectors[0];
-      return policies.map((p) => ({ ...p, score: cosine(query, policyVectorCache.get(keyFor(p))!), retrieval_method: "vector" }))
-        .sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)).slice(0, 4);
+      return select(policies.map((p) => ({ ...p, score: cosine(query, policyVectorCache.get(keyFor(p))!), retrieval_method: "vector", selection: "semantic_similarity" }))
+        .sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)));
     } catch {
       // Keep policy Q&A available when the embedding model or provider fails.
     }
   }
-  return lexical.filter((p) => p.score > 0).sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)).slice(0, 4);
+  return select(lexical.filter((p) => p.score > 0 || anchors.includes(p.section_id)).sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)));
 }
 export function safeText(value: unknown, max = 500): string { return typeof value === "string" ? value.trim().slice(0, max) : ""; }
 export function uuid(): string { return crypto.randomUUID(); }

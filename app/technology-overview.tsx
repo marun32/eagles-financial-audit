@@ -2,6 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { callMcpTool } from "./mcp-client";
+import { streamWorkflow } from "./progress-client";
+import WorkflowTracker, { WorkflowStep } from "./workflow-tracker";
+import type { PolicyResult } from "./policy-qa-panel";
 
 type Destination = "claims" | "policy" | "settlement";
 
@@ -44,7 +47,7 @@ const capabilities: Array<{
   {
     business: "Let an agent query club information",
     implementation: "Authenticated /mcp endpoint exposes read-only tools for team-seasons, overview, settlement, policy sections, and cited policy answers.",
-    boundary: "Policy Q&A and the browser playground use the same JSON-RPC handler through /api/mcp; external MCP clients use /mcp. Claim, decision, and configuration writes stay on the protected application API.",
+    boundary: "External MCP clients use /mcp. The Q&A progress bridge calls the same policy implementation but is not itself JSON-RPC. Claim, decision, and configuration writes stay on the protected application API.",
     status: "Live",
   },
   {
@@ -55,8 +58,8 @@ const capabilities: Array<{
   },
   {
     business: "Show each workflow step to an evaluator",
-    implementation: "The latest submitted claim displays the LangGraph nodes returned by its audit, and each policy answer displays the MCP/retrieval/source path used.",
-    boundary: "These latest-run views are not durable per-claim or per-question execution histories. The process map above remains illustrative.",
+    implementation: "Submission and re-audit stream actual LangGraph node completions. Policy Q&A streams tool, retrieval, source metadata, and model status.",
+    boundary: "These live views are not durable per-claim or per-question execution histories. The process map above remains illustrative.",
     status: "Live",
   },
 ];
@@ -72,7 +75,7 @@ export default function TechnologyOverview({ teamId, onNavigate }: { teamId: str
 
     <section className="card"><div className="card-head"><div><span className="section-kicker">MODEL & RUNTIME</span><h2>Current AI configuration</h2></div></div>{modelInfo ? <div className="info-list"><div><span>Provider</span><strong>{modelInfo.provider}</strong></div><div><span>Policy Q&A model</span><strong>{modelInfo.chatModel}</strong></div><div><span>Receipt image model</span><strong>{modelInfo.visionModel}</strong></div><div><span>Embeddings</span><strong>{modelInfo.embeddingModel}</strong></div><div><span>Receipt extraction</span><strong>{modelInfo.receiptTypes.join(", ")}; PDF {modelInfo.pdfExtraction ? "enabled" : "not yet supported"}</strong></div><div><span>Retrieval</span><strong>{modelInfo.retrieval}</strong></div><div><span>Orchestration</span><strong>{modelInfo.orchestration}</strong></div></div> : <p className="muted">Model configuration is available after sign-in.</p>}</section>
 
-    <section className="card"><div className="card-head"><div><span className="section-kicker">PROCESS MAP</span><h2>Expense to reimbursement</h2></div></div><div className="technology-flow" aria-label="Expense workflow"><span>Claim + optional receipt</span><span>Receipt fact extraction</span><span>LangGraph audit</span><span>Human review if flagged</span><span>Weighted settlement</span></div><p className="footnote">The hosted audit uses LangGraph nodes, but this map is illustrative. A per-claim persisted graph trace is planned.</p><button className="outline" onClick={() => onNavigate("claims")}>Explore claims & audit →</button></section>
+    <section className="card"><div className="card-head"><div><span className="section-kicker">PROCESS MAP</span><h2>Expense to reimbursement</h2></div></div><div className="technology-flow" aria-label="Expense workflow"><span>Claim + optional receipt</span><span>Receipt fact extraction</span><span>LangGraph audit</span><span>Human review if flagged</span><span>Weighted settlement</span></div><p className="footnote">This map is illustrative; Claims & audit shows actual live node completions for the current run. A durable per-claim graph trace is planned.</p><button className="outline" onClick={() => onNavigate("claims")}>Explore claims & audit →</button></section>
 
     <section className="card"><div className="card-head"><div><span className="section-kicker">IMPLEMENTATION MAP</span><h2>How the technology serves the club</h2></div></div><div className="table-wrap"><table className="technology-table"><thead><tr><th>Business step</th><th>Current implementation</th><th>Safety / scope boundary</th><th>Status</th></tr></thead><tbody>{capabilities.map((item) => <tr key={item.business}><td><strong>{item.business}</strong></td><td>{item.implementation}</td><td>{item.boundary}</td><td><span className={`tech-badge ${item.status === "Live" ? "live" : item.status === "Planned" ? "planned" : "reference"}`}>{item.status}</span></td></tr>)}</tbody></table></div></section>
 
@@ -92,16 +95,19 @@ function McpPlayground({ teamId }: { teamId: string }) {
   const [response, setResponse] = useState<unknown>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  const [steps, setSteps] = useState<WorkflowStep[]>([]);
   const args = tool === "get_team_settlement" ? { teamSeasonId: selectedTeam || teamId } : tool === "answer_policy_question" ? { question } : {};
 
-  return <section className="card"><div className="card-head"><div><span className="section-kicker">REAL MCP INTERACTION</span><h2>Read-only tool playground</h2></div><span className="tech-badge live">POST /api/mcp</span></div><p className="muted">Choose a tool and run it as your signed-in club role. The browser bridge uses the same JSON-RPC handler as the external /mcp endpoint, with the same access rules.</p>
-    <form className="mcp-controls" onSubmit={(event) => { event.preventDefault(); setBusy(true); setError(""); setResponse(null); setRequest({ method: "tools/call", params: { name: tool, arguments: args } }); void callMcpTool(tool, args).then(setResponse).catch((cause) => setError(cause instanceof Error ? cause.message : "MCP call failed")).finally(() => setBusy(false)); }}>
+  return <section className="card"><div className="card-head"><div><span className="section-kicker">REAL MCP INTERACTION</span><h2>Read-only tool playground</h2></div><span className="tech-badge live">POST /api/mcp</span></div><p className="muted">Choose a tool and run it as your signed-in club role. Other tools use the JSON-RPC browser bridge; policy Q&A uses a live progress bridge to the same <code>answer_policy_question</code> implementation exposed by /mcp.</p>
+    <form className="mcp-controls" onSubmit={(event) => { event.preventDefault(); setBusy(true); setError(""); setResponse(null); setSteps([]); setRequest({ method: "tools/call", params: { name: tool, arguments: args } }); const work = tool === "answer_policy_question" ? streamWorkflow<PolicyResult, WorkflowStep>("/api/policy/stream", { question }, (progress) => setSteps((current) => [...current, progress])) : callMcpTool(tool, args); void work.then(setResponse).catch((cause) => setError(cause instanceof Error ? cause.message : "MCP call failed")).finally(() => setBusy(false)); }}>
       <label>Tool<select value={tool} onChange={(event) => setTool(event.target.value as McpTool)}>{mcpTools.map((name) => <option key={name}>{name}</option>)}</select></label>
       {tool === "get_team_settlement" && <label>Team-season ID<input value={selectedTeam || teamId} onChange={(event) => setSelectedTeam(event.target.value)} required /></label>}
       {tool === "answer_policy_question" && <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} required /></label>}
       <button className="primary" disabled={busy}>{busy ? "Calling tool…" : "Run MCP tool"}</button>
     </form>
     {error && <div className="alert error" role="alert">{error}</div>}
+    <WorkflowTracker title="Policy tool progress" steps={steps} active={busy} />
+    {tool === "answer_policy_question" && response !== null && <div className="answer"><span className="section-kicker">POLICY ANSWER · {(response as PolicyResult).modelStatus}</span><p>{(response as PolicyResult).answer}</p><small>Citations: {(response as PolicyResult).citations.join(", ") || "None"}</small></div>}
     {(request !== null || response !== null) && <div className="mcp-results"><div><span className="section-kicker">REQUEST</span><pre>{JSON.stringify(request, null, 2)}</pre></div><div><span className="section-kicker">TOOL RESPONSE</span><pre>{response !== null ? JSON.stringify(response, null, 2) : busy ? "Waiting for MCP response…" : "No response"}</pre></div></div>}
   </section>;
 }

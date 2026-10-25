@@ -59,7 +59,17 @@ const auditGraph = new StateGraph(AuditState)
   .addEdge("handoff_to_treasurer", END)
   .compile();
 
-export async function runClaimAuditGraph(claim: Claim, duplicate: boolean, extraction: Extraction): Promise<{ result: Result; steps: string[] }> {
-  const output = await auditGraph.invoke({ claim, duplicate, extraction });
-  return { result: output.result, steps: output.steps };
+export async function runClaimAuditGraph(claim: Claim, duplicate: boolean, extraction: Extraction, onStep?: (step: { node: string; findings?: string[]; citations?: string[]; route?: string }) => void | Promise<void>): Promise<{ result: Result; steps: string[] }> {
+  let result: Result | undefined;
+  const steps: string[] = [];
+  for await (const update of await auditGraph.stream({ claim, duplicate, extraction }, { streamMode: "updates" })) {
+    for (const [node, value] of Object.entries(update)) {
+      const state = value as { result?: Result; steps?: string[] };
+      if (state.result) result = state.result;
+      steps.push(...(state.steps ?? [node]));
+      await onStep?.({ node, ...(result ? { findings: result.findings, citations: result.citations, route: result.route } : {}) });
+    }
+  }
+  if (!result) throw new Error("Audit graph produced no result");
+  return { result, steps };
 }
