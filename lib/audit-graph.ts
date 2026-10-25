@@ -37,10 +37,14 @@ const auditGraph = new StateGraph(AuditState)
   })
   .addNode("retrieve_policy", async (state) => {
     const result: Result = { ...state.result, findings: [...state.result.findings], citations: [...state.result.citations] };
-    const placeholders = result.citations.map(() => "?").join(",");
-    const found = await rows<{ section_id: string }>(`SELECT section_id FROM policies WHERE section_id IN (${placeholders})`, ...result.citations);
-    const ids = new Set(found.map((section) => section.section_id));
-    if (result.citations.some((id) => !ids.has(id))) result.findings.push("POLICY_EVIDENCE_MISSING");
+    try {
+      const placeholders = result.citations.map(() => "?").join(",");
+      const found = await rows<{ section_id: string }>(`SELECT section_id FROM policies WHERE section_id IN (${placeholders})`, ...result.citations);
+      const ids = new Set(found.map((section) => section.section_id));
+      if (result.citations.some((id) => !ids.has(id))) result.findings.push("POLICY_EVIDENCE_MISSING");
+    } catch {
+      result.findings.push("POLICY_LOOKUP_FAILED");
+    }
     if (result.findings.length) result.route = "REVIEW";
     return { result, steps: ["retrieve_policy"] };
   })
