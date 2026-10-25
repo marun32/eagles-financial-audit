@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { env } from "cloudflare:workers";
 import { extractReceipt } from "../../../lib/ai";
 import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, ensureCurrentPolicySeed, first, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
 import { allocate } from "../../../lib/finance";
@@ -61,6 +62,51 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
   }
   if (method !== "POST") throw new HttpError(404, "Route not found");
 
+  if (path.join("/") === "admin/reset-existing-demo-claims") {
+    requireRole(actor, "admin");
+    if (!env.EAGLES_ADMIN_EMAIL || actor.email !== env.EAGLES_ADMIN_EMAIL.trim().toLowerCase()) throw new HttpError(403, "Only the club owner can reset the existing demo claims");
+    const input = await body(request);
+    if (input.confirmation !== "RESET EXISTING DEMO CLAIMS") throw new HttpError(400, "Type the exact reset confirmation");
+    // This one-time action is limited to the seven claims inspected before the reset.
+    const expectedIds = [
+      "0f28da0c-795d-487d-aa3f-cc419fb0594d",
+      "210ff682-ec86-4ed6-8256-0e06b8604b01",
+      "903e8fc4-e349-491b-932a-69fc931b300e",
+      "9a47c8f7-7177-40f3-90d0-ac618628859e",
+      "e875de38-47e7-4b45-8cfa-4416995c33c5",
+      "f0bd4a86-f773-46eb-a957-952fb11ebb65",
+      "f2cba940-4dcf-4580-8e6c-27aaa37889f4",
+    ];
+    const current = await rows<{ id: string; receipt_key: string | null }>("SELECT id,receipt_key FROM claims ORDER BY id");
+    const [audit, revisions, settlements, finalized] = await Promise.all([
+      first<{ n: number }>("SELECT COUNT(*) AS n FROM audit_runs"),
+      first<{ n: number }>("SELECT COUNT(*) AS n FROM claim_revisions"),
+      first<{ n: number }>("SELECT COUNT(*) AS n FROM settlements"),
+      first<{ n: number }>("SELECT COUNT(*) AS n FROM team_seasons WHERE status='FINALIZED'"),
+    ]);
+    if (JSON.stringify(current.map((claim) => claim.id)) !== JSON.stringify(expectedIds) ||
+        audit?.n !== 8 || revisions?.n !== 0 || settlements?.n !== 0 || finalized?.n !== 0) {
+      throw new HttpError(409, "Demo data changed since inspection; reset was not performed");
+    }
+    const receiptKeys: string[] = [];
+    let cursor: string | undefined;
+    do {
+      const page = await bucket().list({ prefix: "receipts/", limit: 1000, ...(cursor ? { cursor } : {}) });
+      receiptKeys.push(...page.objects.map((object) => object.key));
+      if (!page.truncated) break;
+      if (!page.cursor) throw new HttpError(500, "Receipt listing was incomplete");
+      cursor = page.cursor;
+    } while (cursor);
+    if (receiptKeys.length > 1000 || current.some((claim) => claim.receipt_key && !receiptKeys.includes(claim.receipt_key))) throw new HttpError(409, "Receipt targets need review; reset was not performed");
+    const placeholders = expectedIds.map(() => "?").join(",");
+    await database().batch([
+      database().prepare(`DELETE FROM audit_runs WHERE claim_id IN (${placeholders})`).bind(...expectedIds),
+      database().prepare(`DELETE FROM claim_revisions WHERE claim_id IN (${placeholders})`).bind(...expectedIds),
+      database().prepare(`DELETE FROM claims WHERE id IN (${placeholders})`).bind(...expectedIds),
+    ]);
+    if (receiptKeys.length) await bucket().delete(receiptKeys);
+    return json({ deletedClaims: expectedIds.length, deletedAuditRuns: audit.n, deletedReceipts: receiptKeys.length });
+  }
   if (path.join("/") === "admin/seed") { requireRole(actor, "admin"); return json(await seedDemo()); }
   if (path.join("/") === "admin/invite") {
     requireRole(actor, "admin"); const input = await body(request);
