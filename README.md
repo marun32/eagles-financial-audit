@@ -1,41 +1,62 @@
-# Eagles Financial Audit — ChatGPT Site
+# Eagles Financial Audit
 
-One private Site serves the React interface, Worker API, D1 records, R2 receipts, policy Q&A, a LangGraph JS claim audit, and a read-only MCP endpoint. The existing Python/PostgreSQL app remains a separate reference implementation; FastAPI is not deployed in the Site.
+An agentic AI prototype for a sports-club treasurer: players submit expenses with optional receipt images, a LangGraph audit checks evidence and policy, and a treasurer resolves claims that need human review. Club Q&A combines authorized read-only tools with policy retrieval and a grounded model answer.
 
-## Hosted setup
+**Live demo:** https://eagles-financial-audit.vastseed12.chatgpt.site — the Site is owner-private; viewers need Site access. The submitted video demonstrates the app for evaluators without access.
 
-The Site manifest declares `DB`, `BUCKET`, and the `mcp` capability. Sites provisions D1/R2 and applies the generated Drizzle migration on deployment. Runtime variables are configured through Sites, never committed:
+This repository is the **hosted Site implementation only**. It does not run the separate Python/PostgreSQL prototype. The React UI and Worker API share one deployment; Cloudflare D1 holds structured records and R2 holds uploaded receipts.
 
-- `EAGLES_ADMIN_EMAIL`: only this signed-in email may initialize the club admin account.
-- `NEBIUS_API_KEY`: secret for model calls.
-- `NEBIUS_MODEL`: selected Nebius chat/vision model.
-- `NEBIUS_EMBEDDING_MODEL`: selected Nebius embedding model for policy retrieval (currently `Qwen/Qwen3-Embedding-8B`).
+## What to show in the demo
 
-The first authenticated admin selects **Load synthetic demo data**. This inserts the two Eagles teams for Spring and Fall 2026, ten completed games per team-season, mixed/overlapping rosters, system league/umpire expenses, and the synthetic policy corpus. No real member data is migrated. The Site is owner-private by default. An admin can record an invitation in D1, but the member must also be granted Site access before they can sign in.
+1. Sign in, select a team-season, and submit a claim with a PNG or JPEG receipt. The live trace shows claim save, receipt extraction, duplicate check, LangGraph nodes, policy citations, and the persisted approval/review route.
+2. For a flagged claim, show the treasurer's recorded decision and its effect on the provisional weighted settlement. A different claimant and payer always require review.
+3. Ask Club Q&A a policy or team question. The trace shows model-directed tool choice, the actual read-only tool(s), policy section IDs and retrieval method where applicable, then the grounded answer.
+4. Open **AI / Agentic AI** for the implementation map and the read-only MCP playground.
 
-The player expense form accepts an optional PNG/JPEG receipt and submits, uploads when supplied, and audits from one button. New PDF uploads are rejected in the UI and Worker API; historical PDFs remain privately downloadable and require review if re-audited. The claim queue retains receipt replacement and re-audit controls for recovery and revisions. Submission and re-audit use `/api/claims/:id/audit/stream` to show actual LangGraph node completions, findings, policy IDs, and final persisted route. The hosted LangGraph JS graph evaluates rules, verifies receipt facts, looks up cited policy sections in D1, and branches to auto-approval or treasurer handoff; D1 persists human decisions, but LangGraph checkpoint/resume is not yet hosted.
+The claim graph is implemented in [`lib/audit-graph.ts`](lib/audit-graph.ts); the Q&A planner is in [`lib/club-qa.ts`](lib/club-qa.ts). Q&A is a bounded tool orchestrator, **not** a second LangGraph graph or autonomous agent-to-agent messaging. The UI progress route uses the same authorized tool implementations exposed by the JSON-RPC MCP server at `/mcp`; the progress route itself is not MCP transport.
 
-Club Q&A uses `/api/policy/stream` for a live planner → selected tool(s) → retrieval (when applicable) → grounded answer trace. Nebius selects up to three names from a bounded catalog of read-only MCP-exposed tools: team-seasons, overview, roster, settlement, and policy search. If model planning fails, an explicitly labeled deterministic selection fallback runs. The browser progress route executes the same authorized tool implementations exposed by JSON-RPC at `/mcp` and `/api/mcp`, but is not itself MCP transport. `answer_club_question` exposes the same orchestrator to external MCP clients; `answer_policy_question` remains available as a policy-only tool. Policy sections are ranked with embeddings or keyword fallback; financial facts come from structured D1-backed tools, never vector search. A failed answer model does not fabricate an answer. The policy library uses JSON-RPC `/api/mcp` with a protected API fallback. Claim, treasurer-decision, and admin writes remain protected API operations, not MCP tools.
-Club Q&A is a bounded function orchestrator, not a second LangGraph graph. Tool choice is model-directed when Nebius is available, but tool arguments and access checks remain server-controlled.
+## Data and boundaries
 
-## Local checks
+**Load synthetic demo data** runs [`seedDemo()`](lib/data.ts) once against D1. It creates the Eagles teams, 2026 Spring/Fall seasons, rosters, attendance, league and umpire fees, and 39 synthetic policy sections from [`lib/policy-seed.json`](lib/policy-seed.json). Admin edits and new claims are stored in D1; uploaded image bytes are stored privately in R2. The hosted app does **not** import CSV files. See [`docs/datasets.md`](docs/datasets.md) for precise seed and test-fixture provenance.
+
+The Site accepts optional PNG/JPEG receipts up to 5 MB, not new PDF uploads. Receipt vision extraction supplies facts, not approval decisions. Under-$50 claims can auto-approve only with a readable, matching receipt and no other flags; otherwise they go to treasurer review. Claim amounts and settlement math are calculated by deterministic code, not the LLM.
+
+Policy Q&A uses Nebius embeddings to rank D1 policy sections, with lexical fallback. Embedding vectors are cached per Worker isolate, not stored in Pinecone or a durable vector index. A model failure yields an explicit fallback rather than an invented answer. The D1 audit-run record is **not** a durable LangGraph checkpoint saver.
+
+## Run locally
+
+Requires Node.js 22.13+ and npm. From this repository root:
 
 ```sh
-npm run db:generate
-npx tsc --noEmit
-./node_modules/.bin/tsx --test tests/finance.test.ts
+npm ci
 npm run build
 ```
 
-Use the Sites workflow's install and build helpers for setup/publication. Local D1 and hosted D1 are separate. Local development sign-in uses the starter's `seedy@sites.test` mock account; hosted sign-in is ChatGPT-owned.
+For a fresh local D1 database, apply the committed migrations in order. These commands affect only local `.wrangler/state`, not the hosted database:
 
-The financial tests compare all 80 player balances in the existing Python golden dataset. Local HTTP smoke checks cover sign-in, seed, claim submission, missing-receipt review, treasurer decision, clarification/resubmission with archived receipt access, R2 upload/download, settlement, fee impact preview, Q&A, and MCP discovery.
+```sh
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0000_misty_christian_walker.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0001_lovely_miek.sql
+node --import ./scripts/sites-env.mjs ./node_modules/wrangler/bin/wrangler.js d1 execute DB --local --config dist/server/wrangler.json --persist-to .wrangler/state --file drizzle/0002_chemical_martin_li.sql
+npm run dev
+```
 
-## Important boundaries
+Open `http://127.0.0.1:5173/signin-with-chatgpt?return_to=/`. The loopback preview uses a mock `seedy@sites.test` admin identity; hosted sign-in is ChatGPT-owned. Select **Load synthetic demo data** once. Do not rerun migrations against an already migrated local D1 database.
 
-- Claims under $50 auto-approve only when extracted image receipt facts are complete and agree with the claim, with no alcohol or other flags. Missing/unverified evidence goes to review, not rejection.
-- PNG/JPEG images are sent to the Nebius vision model for factual extraction. PDF uploads are no longer accepted; previously stored PDF receipts are preserved for authorized download and conservatively require review if re-audited. The two changed synthetic policy sections are version-gated and update older D1 demo copies on the first policy read; the frozen local v1 policy fixtures remain untouched.
-- Policy retrieval ranks D1 sections with Nebius embeddings and cosine similarity. Embeddings are cached only per Worker isolate, not in a durable vector database; if embedding calls fail, lexical retrieval is used and the response reports which method ran.
-- The Site includes clarification/revision and a read-only fee/multiplier impact preview. Its confirmation path is simpler than the Python backend's version/hash/idempotency-checked confirmation flow, so it is not full API parity yet.
-- The Site runs LangGraph JS nodes, but its D1 audit-run state is not a LangGraph checkpoint saver. Describe that distinction accurately in the project submission.
-- A first-user admin bootstrap is restricted to `EAGLES_ADMIN_EMAIL`; sign-in alone never grants club membership afterward.
+Nebius is optional for building and deterministic tests. To exercise live Q&A, embeddings, and receipt vision locally, create an **ignored** `.dev.vars` containing `NEBIUS_API_KEY`, `NEBIUS_MODEL` (a model supporting chat and images), and `NEBIUS_EMBEDDING_MODEL`. Use model IDs available in your Nebius account. Never commit `.dev.vars` or an API key. Without a configured model, the app uses its labeled fallbacks; it cannot demonstrate full model extraction or answering.
+
+## Verify
+
+```sh
+npx tsc --noEmit
+node --import tsx --test tests/finance.test.ts
+npm run build
+```
+
+The settlement test checks all 80 player outcomes in a compact copy of the independently generated offline goldens under [`tests/fixtures/`](tests/fixtures/). Those fixtures test the allocation algorithm; they are not the hosted D1 demo records.
+
+## Hosted configuration
+
+The tracked [`.openai/hosting.json`](.openai/hosting.json) declares D1 (`DB`), R2 (`BUCKET`), and MCP. Its project ID is not a secret, but deploying to that Site requires owner authorization. Runtime values are configured in Sites, not committed: `EAGLES_ADMIN_EMAIL`, `NEBIUS_API_KEY`, `NEBIUS_MODEL`, and `NEBIUS_EMBEDDING_MODEL`. The first authenticated user must match `EAGLES_ADMIN_EMAIL` to bootstrap the club admin. Later users need both Site access and an application invitation.
+
+This is a synthetic educational prototype, not a production accounting or payment system. The hosted graph persists audit events and treasurer decisions in D1, but does not yet use a durable LangGraph checkpoint saver. Its fee-change confirmation and model-failure handling are simpler than a production financial control workflow.

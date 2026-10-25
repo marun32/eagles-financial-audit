@@ -34,8 +34,8 @@ test("claim deadline uses calendar months and clamps month-end", () => {
 
 test("port matches all 80 Python settlement player goldens", () => {
   const readJsonl = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8").trim().split("\n").map((line) => JSON.parse(line));
-  const runs = readJsonl("../../../data/expected/settlements.jsonl");
-  const expectedRows = readJsonl("../../../data/expected/settlement_players.jsonl");
+  const runs = readJsonl("./fixtures/settlements.jsonl");
+  const expectedRows = readJsonl("./fixtures/settlement_players.jsonl");
   assert.equal(expectedRows.length, 80);
   for (const run of runs) {
     const goldens = expectedRows.filter((row) => row.settlement_run_id === run.settlement_run_id);
