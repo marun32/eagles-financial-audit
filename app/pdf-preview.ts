@@ -3,8 +3,8 @@
 /** Render the first page for factual extraction; the original PDF is stored unchanged. */
 export async function pdfPreview(file: File): Promise<Blob | null> {
   if (file.type !== "application/pdf") return null;
-  const pdfjs = await import("pdfjs-dist");
-  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/build/pdf.worker.min.mjs", import.meta.url).toString();
+  const pdfjs = await import("pdfjs-dist/legacy/build/pdf.mjs");
+  pdfjs.GlobalWorkerOptions.workerSrc = new URL("pdfjs-dist/legacy/build/pdf.worker.min.mjs", import.meta.url).toString();
   const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await file.arrayBuffer()) });
   const pdfDocument = await loadingTask.promise;
   try {
