@@ -15,6 +15,8 @@ This repository is the **hosted Site implementation only**. It does not run the 
 
 The claim graph is implemented in [`lib/audit-graph.ts`](lib/audit-graph.ts); the Q&A planner is in [`lib/club-qa.ts`](lib/club-qa.ts). Q&A is a bounded tool orchestrator, **not** a second LangGraph graph or autonomous agent-to-agent messaging. The UI progress route uses the same authorized tool implementations exposed by the JSON-RPC MCP server at `/mcp`; the progress route itself is not MCP transport.
 
+For the complete business-workflow, model, LangGraph, retrieval, MCP, memory, and demo map, see [AI / Agentic AI implementation guide](AI_AGENTIC_AI_README.md).
+
 ## Data and boundaries
 
 **Load synthetic demo data** runs [`seedDemo()`](lib/data.ts) once against D1. It creates the Eagles teams, 2026 Spring/Fall seasons, rosters, attendance, league and umpire fees, and 39 synthetic policy sections from [`lib/policy-seed.json`](lib/policy-seed.json). Admin edits and new claims are stored in D1; uploaded image bytes are stored privately in R2. The hosted app does **not** import CSV files. See [`docs/datasets.md`](docs/datasets.md) for precise seed and test-fixture provenance.
