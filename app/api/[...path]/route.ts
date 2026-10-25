@@ -63,7 +63,7 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
   if (method !== "POST") throw new HttpError(404, "Route not found");
 
   if (path.join("/") === "admin/reset-existing-demo-claims") {
-    requireRole(actor, "admin");
+    requireRole(actor, "admin", "treasurer");
     if (!env.EAGLES_ADMIN_EMAIL || actor.email !== env.EAGLES_ADMIN_EMAIL.trim().toLowerCase()) throw new HttpError(403, "Only the club owner can reset the existing demo claims");
     const input = await body(request);
     if (input.confirmation !== "RESET EXISTING DEMO CLAIMS") throw new HttpError(400, "Type the exact reset confirmation");
