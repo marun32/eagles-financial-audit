@@ -13,7 +13,8 @@ export async function executeClaimAudit(claimId: string, actor: Actor, onProgres
   if (["APPROVED", "REJECTED"].includes(claim.status)) return { id: claim.id, status: claim.status, route: claim.route, graphSteps: [] };
 
   await emit({ stage: "duplicate_check", status: "running", detail: "Comparing payer, amount, vendor, date, and team-season" });
-  const duplicate = await first("SELECT id FROM claims WHERE id<>? AND team_season_id=? AND payer_id=? AND amount_cents=? AND vendor=? AND expense_date=? LIMIT 1", claim.id, claim.team_season_id, claim.payer_id, claim.amount_cents, claim.vendor, claim.expense_date);
+  // Keep rejected claims for audit history, but they must not block a later valid submission.
+  const duplicate = await first("SELECT id FROM claims WHERE id<>? AND team_season_id=? AND payer_id=? AND amount_cents=? AND vendor=? AND expense_date=? AND status<>'REJECTED' LIMIT 1", claim.id, claim.team_season_id, claim.payer_id, claim.amount_cents, claim.vendor, claim.expense_date);
   await emit({ stage: "duplicate_check", status: "complete", detail: duplicate ? "Possible duplicate found; review required" : "No matching claim found" });
   const extraction = claim.receipt_extraction_json ? JSON.parse(claim.receipt_extraction_json) as { status?: string; fields?: Record<string, unknown> } : null;
   const { result, steps } = await runClaimAuditGraph(claim, !!duplicate, extraction, async ({ node, findings, citations, route }) => {
