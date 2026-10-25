@@ -1,113 +1,216 @@
-# AI / Agentic AI implementation guide
+# Eagles Financial Audit: AI and agentic workflows
 
-This guide describes the **hosted Eagles Financial Audit Site as implemented**, not the separate local Python/PostgreSQL prototype. The live app is a React UI and Worker API in one deployment, backed by Cloudflare D1 (records) and R2 (private receipt images). Nebius Token Factory supplies chat/vision and embeddings when configured. The actual model IDs are runtime configuration, displayed after sign-in on the **AI / Agentic AI** tab; they are not hard-coded in the repository.
+This visual guide follows **what our hosted Eagles project actually does**. The separate local Python/PostgreSQL prototype is not the hosted app.
 
-The useful distinction for a project demo is this: **claim auditing uses a real LangGraph JS state graph; Club Q&A uses a bounded LLM tool planner and grounded answer generator, not a second LangGraph graph.** The two workflows share policy and club data, but no autonomous peer agents communicate with each other.
+## The project in one picture
 
-## Architecture at a glance
-
-```mermaid
+~~~mermaid
 flowchart LR
-  UI[React dashboard] --> API[Worker API and identity checks]
-  API --> D1[(D1: club, claims, policies, audit runs)]
-  API --> R2[(R2: private receipt images)]
-  API --> Intake[Receipt fact extraction: Nebius vision]
-  API --> Audit[LangGraph JS claim audit]
-  Audit --> D1
-  API --> QA[Club Q&A orchestrator]
-  QA --> Planner[Nebius read-tool planner]
-  QA --> Tools[Authorized read-only tool implementations]
-  Tools --> D1
-  Tools --> Retrieval[Nebius embeddings or lexical fallback]
-  QA --> Answer[Nebius evidence-grounded answer]
-  MCP[Authenticated JSON-RPC /mcp] --> Tools
-  API --> Finance[Deterministic settlement engine]
-  Finance --> D1
-```
+  A["Admin configures teams,<br/>rosters, games, fees, policies"] --> B["Player submits season expense<br/>+ optional receipt image"]
+  B --> C["AI extracts receipt facts<br/>if image attached"]
+  C --> D["LangGraph audits the claim"]
+  D -->|Clean and eligible| E["Auto-approve"]
+  D -->|Flagged| F["Treasurer decides"]
+  E --> G["Approved costs enter pool"]
+  F -->|Approve| G
+  F -->|Reject or unresolved| H["Excluded from pool"]
+  G --> I["Weighted settlement<br/>calculated by code"]
+  J["Member asks a question"] --> K["AI selects read-only tools"]
+  K --> L["Club data and/or<br/>policy retrieval"]
+  L --> M["Evidence-based answer<br/>with checked citations"]
+~~~
 
-ChatGPT Site identity is mapped to an app actor (`admin`, `treasurer`, or `player`). Server-side role, roster, team-season, and claim-ownership checks apply before sensitive operations. An MCP client receives only data that the signed-in actor is permitted to read; MCP tools cannot submit or approve expenses. See [`actorFor()` and access checks](lib/data.ts) and the [API routes](app/api/%5B...path%5D/route.ts).
-
-## Business workflow → implementation
-
-| Business workflow | What happens | AI/agentic part | Durable result / human control |
-| --- | --- | --- | --- |
-| Club setup and synthetic data | Admin seeds Eagles-LCCL/WMCL Spring and Fall 2026, rosters, 10 completed matches per team-season, league/umpire fees, and synthetic policies. Admin can configure teams, players, attendance, fees, and multipliers. | None; seeded/configured data is deterministic. | D1 records; fee edits are versioned in `config_history`. |
-| Claim submission | A rostered player submits a season-level claim; they may have played zero games. A PNG/JPEG receipt is optional. The UI combines claim creation, optional upload/extraction, and audit under one submit action. | Nebius vision extracts receipt facts when an image is attached. LangGraph audits the claim. | Claim, findings, citations, route, and audit run in D1; image bytes in R2. |
-| Re-audit | A pending claim can be re-audited after adding/replacing a receipt. | Same LangGraph path, with live stage events. | Updated route and another D1 audit-run record. Final approved/rejected claims are not re-audited. |
-| Treasurer review and clarification | Flagged claims wait for an authorized treasurer/admin to approve, reject, or request clarification with a reason. A claimant can resubmit a revised claim after clarification. | The graph only chooses the *handoff route*; it does not impersonate the treasurer or decide a human review. | Decision, approved amount, revision snapshots, and audit-run stage persist in D1. |
-| Club Q&A | Member asks about policy, teams, roster, pool, or settlement. | Nebius selects up to three allowlisted read tools; retrieval and grounded answer generation follow. | Answer, tool choice, retrieval method, and section IDs are shown for the current run; no financial record is changed. |
-| MCP playground / external client | Authenticated JSON-RPC client calls an advertised read-only tool. | Tool interface for agents, not an autonomous second agent. Answer tools may invoke the Q&A model. | Authorized read-only response; no write tool is exposed. |
-| Weighted settlement | League fee + umpire fees for completed games + approved player-paid claims form the team-season pool. Allocate by games played × configured multiplier, then apply approved payer credits. | None; integer-cent TypeScript calculation. | Provisional preview; treasurer/admin can finalize only after the claim deadline and all claims are resolved. |
-
-The seed and fixture provenance are in [`docs/datasets.md`](docs/datasets.md). Synthetic policies are product assumptions, **not** an official league policy or real-world accounting advice.
-
-## Claim audit: actual LangGraph path
-
-The UI first saves a claim, optionally uploads an image and calls receipt extraction, then streams the audit. Those intake actions are **outside** the graph. The server performs `claim_lookup` and `duplicate_check` before invoking the graph. A duplicate is a matching team-season, payer, amount, vendor, and expense date from another **non-rejected** claim. It is a review flag, not an automatic rejection. This differs from receipt verification, which compares the submitted claim to facts extracted from *its own image*.
-
-```text
-claim_save [UI/API]
-  → receipt_extraction [optional PNG/JPEG vision, API]
-  → claim_lookup → duplicate_check [audit service]
-  → evaluate_rules → verify_receipt → route_review → retrieve_policy [LangGraph]
-  → auto_approve OR handoff_to_treasurer [LangGraph conditional edge]
-  → persist_decision [audit service]
-```
-
-The graph's state contains the claim, duplicate flag, extraction result, rule result, and visited nodes. [`evaluate_rules`](lib/audit-graph.ts) applies the deterministic receipt, alcohol, amount, payer, and duplicate rules. `verify_receipt` checks extraction completeness and compares receipt total, vendor, date, and alcohol indication to the form. `route_review` forces review for findings. `retrieve_policy` checks that cited policy section IDs exist in D1; **this node is not vector search**. The conditional edge selects auto-approval or treasurer handoff. [`executeClaimAudit()`](lib/claim-audit-service.ts) streams node completions and persists the route, findings, citations, and audit run. [`/api/claims/[id]/audit/stream`](app/api/claims/%5Bid%5D/audit/stream/route.ts) supplies the live UI tracker.
-
-The under-`$50.00` threshold means *strictly below* $50 can auto-approve **only if** there is a readable, matching receipt, claimant equals payer, no alcohol, no suspected duplicate, and no other finding. Exactly $50 needs review. A missing, unclear, or mismatched receipt also needs review; an optional receipt is not equivalent to automatic approval. The model extracts facts but cannot override these rules. New PDF receipts are not accepted; historical PDFs, if any, are review-only. The API accepts PNG/JPEG files under 5 MB and checks file signatures as well as MIME type. See [`extractReceipt()`](lib/ai.ts), [`evaluateClaim()`](lib/data.ts), and the [claim API](app/api/%5B...path%5D/route.ts).
-
-An `APPROVED` claim contributes its approved amount to the pool and credits the payer after each player's weighted charge is calculated. `NEEDS_REVIEW`, `NEEDS_CLARIFICATION`, `REJECTED`, and other unresolved claims do not enter the pool. A claimant may submit if rostered even with zero games played; season claim windows close three months after the last completed game, using the club's `America/New_York` calendar date.
-
-## Club Q&A: tool planning, retrieval, grounded answer
-
-The [Club Q&A streaming endpoint](app/api/policy/stream/route.ts) runs [`runClubQuestion()`](lib/club-qa.ts):
-
-1. **Planner:** Nebius proposes 1–3 tool names from a strict read-only allowlist. Invalid or unavailable planning falls back to bounded keyword rules. It cannot choose a write tool.
-2. **Authorized tool calls:** The server selects an authorized team-season and invokes the same read-tool implementations that the MCP server exposes. No matching authorized team means a tool is skipped, not a broad cross-team query.
-3. **Policy retrieval, when selected:** [`policySearch()`](lib/data.ts) reads versioned policy sections from D1, embeds the question and uncached sections through Nebius, ranks by cosine similarity, and returns up to five sections with IDs and metadata. Intent anchors help approval/limit questions. If embeddings fail or are unconfigured, keyword ranking is used. This is **vector ranking with lexical fallback**, not a Pinecone index or a continuously fused hybrid search.
-4. **Grounded answer:** Nebius receives only returned evidence. Policy-only answers must cite returned section IDs; mixed club answers must cite returned policy IDs or `MCP:tool_name` labels. Unsupported citation labels are rejected. Mixed answers also reject dollar amounts not present in evidence. If evidence or a verified model answer is unavailable, the UI reports a labeled fallback and leaves the evidence visible instead of inventing a policy or balance.
-
-The live tracker shows `planner`, `tool_<name>`, `retrieval` (with method and policy section IDs), and `model` status. `MODEL_OUTPUT_BUDGET_EXHAUSTED` means the provider ended generation before yielding usable answer text; it is a model fallback, **not** a successful AI answer. This Q&A workflow is a bounded orchestrator written in TypeScript, not a LangGraph graph. See [`lib/club-qa.ts`](lib/club-qa.ts) and [model prompts/guards](lib/ai.ts).
-
-## MCP tool catalog
-
-The authenticated JSON-RPC MCP endpoint is [`/mcp`](app/mcp/route.ts); the in-app playground calls the equivalent [`/api/mcp`](app/api/mcp/route.ts). Both advertise these eight tools from [`lib/mcp-tools.ts`](lib/mcp-tools.ts):
-
-| Tool | Business use |
+| Term | What it means **in Eagles** |
 | --- | --- |
-| `list_team_seasons` | Visible teams, seasons, and configured fees. |
-| `get_team_overview` | Authorized pools, claim counts, and roster counts. |
-| `get_team_settlement` | Calculated, access-filtered player charges, credits, and balances for one team-season. |
-| `get_team_roster` | Roster names and games played for one authorized team-season; no emails. |
-| `search_policy_sections` | Ranked policy text with section IDs and retrieval metadata. |
-| `list_policy_sections` | Versioned synthetic policy library. |
-| `answer_policy_question` | Policy-only retrieval and citation-checked model answer. |
-| `answer_club_question` | Bounded tool selection and answer across club data and policy. |
+| **LangGraph** | The actual claim-audit flow: named steps share state and branch to auto-approval or treasurer handoff. |
+| **RAG** | For policy questions, retrieve relevant synthetic policy sections first; then ask the model to answer from those sections. |
+| **MCP** | A standard authenticated interface through which an AI client can call our read-only club tools. |
 
-The browser's live Club Q&A endpoint calls the **same server-side read-tool functions** but is not itself MCP transport. The playground performs a real `tools/call` JSON-RPC request. MCP here means a standard tool interface; it does **not** demonstrate agent-to-agent (A2A) messaging. Claim writes, configuration changes, and treasurer decisions remain separately authorized application API calls.
+These are different jobs. AI helps read and explain evidence; **rules and code** decide approval eligibility and calculate money.
 
-## Models, state, memory, and guardrails
+## Journey 1 — submit and audit an expense
 
-| Concern | Hosted implementation | Boundary |
+Imagine a rostered Eagles-LCCL player paid **$42 for team supplies** during Spring. They enter the amount, vendor, date, category, payer, and description, optionally attach a PNG/JPEG receipt, then press **Submit expense** once.
+
+~~~mermaid
+flowchart TD
+  A["Player submits claim<br/>+ optional receipt"] --> B["Save claim in D1"]
+  B --> C{"Image attached?"}
+  C -->|Yes| D["Store privately in R2;<br/>Nebius vision extracts facts"]
+  C -->|No| E["Record missing receipt"]
+  D --> F["Check for possible duplicate"]
+  E --> F
+  F --> G1
+  subgraph GRAPH["Actual LangGraph audit"]
+    direction TD
+    G1["1. Evaluate rules"] --> G2["2. Verify receipt"]
+    G2 --> G3["3. Route review"]
+    G3 --> G4["4. Check cited policy IDs"]
+    G4 --> G5{"Eligible for<br/>auto-approval?"}
+    G5 -->|Yes| G6["5a. Auto-approve branch"]
+    G5 -->|No| G7["5b. Treasurer handoff branch"]
+  end
+  G6 --> H["Save result and audit run in D1"]
+  G7 --> H
+  H --> I["Show live tracker and result"]
+~~~
+
+**Important distinction:** Save, image extraction, duplicate check, and final persistence are application actions **around** the graph. The numbered steps inside the box are the actual LangGraph nodes. The UI displays progress from both.
+
+| Step seen in the tracker | What it does for Eagles | Who or what performs it? |
 | --- | --- | --- |
-| Chat and receipt vision | Nebius `/v1/chat/completions`, selected by runtime `NEBIUS_MODEL`; same configured model handles Q&A/planning and image fact extraction. | No secret or model ID is committed; the signed-in technology page reports the current ID. Receipt output is treated as untrusted evidence. |
-| Embeddings | Nebius `/v1/embeddings`, selected by `NEBIUS_EMBEDDING_MODEL`. | Policy vectors are cached in a Worker-isolate `Map` keyed by model and policy content/version. The cache can disappear; it is not durable vector storage. |
-| LangGraph state | Per-audit transient graph state and streamed node updates. | D1 audit runs persist *business* history, but there is no durable LangGraph checkpoint saver or graph resume after a Worker restart. Human review continues through app/D1 state. |
-| Application memory | D1 stores actors, team-seasons, attendance, policies, claims, decisions, revisions, configuration history, and settlements; R2 stores private receipt bytes. | No mem0, long-term conversational memory, autonomous learning, or agent-to-agent state exchange is implemented. |
-| Safety and authorization | Server-side actor/roster checks, read-only MCP tools, deterministic approval rules, citation verification, amount guard for mixed answers, explicit failure labels. | LLM output is not trusted to approve claims, alter fees, calculate settlements, or bypass access controls. |
-| Observability | Live NDJSON progress for claim audits and Club Q&A; D1 audit-run records for claim routes and review state. | The browser trace is for the current execution, not a durable replay of every model/tool event. LangSmith tracing is not configured in this hosted source. |
+| **Save claim** | Checks roster membership, season window, payer, and expense date. A rostered player may claim even with **zero games played**. | Application validation, not AI. |
+| **Read receipt** | If an image exists, extracts vendor, date, total, readability, and alcohol indication. Failure does not prevent submission but does prevent auto-approval. | Nebius vision extracts facts; it does **not** approve. |
+| **Duplicate check** | Looks for another non-rejected claim with the same team-season, payer, amount, vendor, and date. | Database check; a match flags review, not rejection. |
+| **1. Evaluate rules** | Checks missing receipt, alcohol, the $50 threshold, different payer, and duplicate flag. | Deterministic LangGraph node. |
+| **2. Verify receipt** | Compares extracted facts with the amount, vendor, and date typed by the player; also checks readability and alcohol. | Deterministic LangGraph node using AI-extracted evidence. |
+| **3. Route review** | A finding keeps the claim on the human-review path. | Deterministic LangGraph node. |
+| **4. Check cited policy IDs** | Confirms that the policy section IDs used to explain the route exist in D1. **This is not Q&A vector search.** | D1 lookup inside LangGraph. |
+| **5a / 5b. Branch** | Sends a clean eligible claim to auto-approval; otherwise hands it to a treasurer. | LangGraph conditional edge, not an LLM judgment. |
+| **Save outcome** | Persists status, findings, policy IDs, and audit-run state. | Application/D1 step outside the graph. |
 
-The app does not use PostgreSQL, Pinecone, Fireworks, LlamaIndex, or a separate A2A service in the hosted deployment. Those tools were considered during planning; naming them as implemented would overstate the prototype. D1/R2 are the hosted sources of truth. Financial math lives in [`lib/finance.ts`](lib/finance.ts), where integer-cent allocation uses the largest-remainder method and a player-ID tie-breaker. Default multipliers are 0 games → 0, 1 → 0.5, 2–3 → 0.75, 4–6 → 1, and 7–10 → 1.25; admins may edit per-game-count multipliers for an open team-season.
+Why enter the amount **and** upload the receipt? The amount is the player's claim; the image is independent supporting evidence. Receipt verification compares the two. Duplicate checking instead compares this claim with **other claims**. Rejected claims do not count as duplicate blockers.
 
-## Suggested evaluator walkthrough
+### Auto-approval rule
 
-1. On **AI / Agentic AI**, show the runtime model IDs and business/tech map. State the distinction between the LangGraph audit and bounded Q&A orchestrator.
-2. Submit a small, same-payer claim with a clear PNG/JPEG receipt. Read the live `claim_save` → `receipt_extraction` → audit-node → `persist_decision` tracker. Show extracted facts versus entered amount/vendor/date and the final route. A clean under-$50 claim may auto-approve; a receipt or model failure appropriately routes to review.
-3. Submit an alcohol, different-payer, missing-receipt, or $50 claim to trigger `handoff_to_treasurer`. Show a human decision with a reason and the resulting settlement preview; optionally re-audit an unresolved claim after replacing its receipt.
-4. Ask Club Q&A “Who approves expenses, and is there a maximum claim amount?” Show planner choice, named read tool, retrieval method, exact policy section IDs, and citation-checked answer or explicit fallback.
-5. In the MCP playground, call `get_team_settlement` or `search_policy_sections` and point out the real JSON-RPC request/response. Explain that MCP exposes read tools; the browser Q&A progress route shares their implementation but is not the MCP protocol.
-6. Show weighted charges and approved payer credits. Explain that this final calculation is deterministic, not LLM-generated.
+~~~text
+Strictly under $50
+AND readable, matching receipt
+AND claimant = payer
+AND no alcohol indication
+AND no duplicate suspicion or other finding
+           → auto-approve
 
-For local setup, tests, hosted access, and submission boundaries, see the [main README](README.md). The prototype is educational and synthetic; it does not move money or replace an audited accounting system.
+Anything else → treasurer review
+~~~
+
+Exactly **$50** requires review. A receipt is optional for *submission* but necessary for *automatic approval*. Alcohol is not prohibited; it requires review. A different payer requires review even if the receipt matches.
+
+New uploads accept PNG/JPEG images under 5 MB, not PDFs. Claims apply to the **whole season**, not a specific game. The claim window closes three calendar months after the last completed game, using the club's America/New_York date.
+
+### When a human takes over
+
+~~~mermaid
+flowchart LR
+  A["Graph flags claim"] --> B["Treasurer/admin reviews<br/>receipt, findings and policy IDs"]
+  B --> C{"Decision with a reason"}
+  C -->|Approve all or part| D["Approved amount enters pool;<br/>payer gets credit"]
+  C -->|Reject| E["No pool amount or credit"]
+  C -->|Ask for clarification| F["Player revises claim"]
+  F --> G["Audit runs again"]
+~~~
+
+An unresolved claim may also be re-audited after adding or replacing a receipt. Final approved/rejected claims cannot. The graph **hands off** to the treasurer; human decisions are recorded through the application in D1, not by an LLM or a resumed graph checkpoint.
+
+## Journey 2 — ask a club or policy question
+
+Example: **“Who approves expenses, and is there a maximum claim amount?”** That needs policy evidence. **“What does Avery owe in Eagles-WMCL Fall?”** needs authorized settlement data. The assistant chooses the right read-only tools for the question.
+
+~~~mermaid
+flowchart TD
+  A["Member asks question"] --> B["Nebius chooses up to 3<br/>allowlisted read-only tools"]
+  B --> C{"Evidence needed?"}
+  C -->|Policy| D["Search D1 policy sections"]
+  C -->|Club facts| E["Read authorized team,<br/>roster or settlement data"]
+  C -->|Both| D
+  C -->|Both| E
+  D --> F["Semantic vector ranking<br/>or keyword fallback"]
+  F --> G["Up to 5 policy sections<br/>with IDs and metadata"]
+  G --> I["Nebius drafts answer<br/>from returned evidence only"]
+  E --> I
+  I --> J{"Citations and amounts<br/>supported by evidence?"}
+  J -->|Yes| K["Show answer, citations,<br/>and live progress"]
+  J -->|No or model unavailable| L["Explicit fallback;<br/>do not invent an answer"]
+~~~
+
+| Live step | What an evaluator can see | Why it matters |
+| --- | --- | --- |
+| **Tool choice** | The model-selected tool names. If planning fails, bounded keyword rules choose from the same allowlist. | AI decides **what to read**, not what records to change. |
+| **Policy retrieval / RAG** | Retrieval method (vector or lexical), section IDs such as EXP-5, and metadata. | Policy answers are traceable to our synthetic documents, not model memory. |
+| **Club-data tool** | Named team, roster, overview, or settlement tool; response is access-filtered. | Live balances and players come from D1, not a policy document. |
+| **Grounded answer** | Citations to returned sections or tool results. Invalid citations are rejected; mixed answers reject dollar amounts absent from evidence. | A fluent unsupported answer is treated as a failure. |
+| **Fallback** | Labeled model/tool issue and available evidence. | Provider failure or output-budget exhaustion does not become a fabricated answer. |
+
+Policy sections live in D1. Nebius embeddings rank them when available; keyword search is the fallback. Vectors are cached temporarily in a Worker instance, **not** stored in Pinecone. Q&A is a bounded TypeScript tool workflow, **not a second LangGraph graph**.
+
+## Where MCP fits
+
+~~~mermaid
+flowchart LR
+  A["External MCP client or<br/>in-app playground"] -->|JSON-RPC tools/call| B["Authenticated /mcp"]
+  C["In-app Club Q&A"] -->|same implementations| D["Read-only tool layer"]
+  B --> D
+  D --> E["Authorized D1 club data<br/>and policy search"]
+  D --> F["Optional model-based<br/>answer tools"]
+~~~
+
+MCP is the **tool interface**, not the audit graph or the RAG algorithm. The eight exposed tools are:
+
+| Business need | MCP tool |
+| --- | --- |
+| Configured teams and fees | list_team_seasons |
+| Pools and claim counts | get_team_overview |
+| Calculated player balances | get_team_settlement |
+| Roster and games played | get_team_roster |
+| Ranked policy evidence | search_policy_sections |
+| Full policy library | list_policy_sections |
+| Policy-only answer | answer_policy_question |
+| Club-data and/or policy answer | answer_club_question |
+
+The playground makes a **real JSON-RPC MCP call**. Club Q&A reuses those authorized tool implementations and adds live progress, but its browser progress endpoint is not MCP transport. No MCP tool can submit or approve an expense. There is **no agent-to-agent/A2A conversation** in this MVP.
+
+## Journey 3 — turn approved costs into player balances
+
+~~~mermaid
+flowchart LR
+  A["Configured league fee"] --> D["Team-season expense pool"]
+  B["Umpire fee ×<br/>completed games"] --> D
+  C["Approved claim amounts"] --> D
+  D --> E["Divide by weighted appearances<br/>games played × multiplier"]
+  E --> F["Player's charge"]
+  G["Approved expense paid<br/>by player"] --> H["Payer credit"]
+  F --> I["Balance = charge − credit"]
+  H --> I
+~~~
+
+This is **deterministic TypeScript accounting, not AI**. Default multipliers are 0 games → 0×, 1 → 0.5×, 2–3 → 0.75×, 4–6 → 1×, and 7–10 → 1.25×. There is no flat player fee. Integer-cent rounding reconciles to the full pool. A payer receives credit **after** the pool is allocated, even if they played zero games. Unapproved claims contribute nothing.
+
+Admin/treasurer can preview a settlement. Finalization waits until after the claim deadline and all claims are resolved. Teams, fees, game status, attendance, and multipliers are maintained in the app, not CSV files.
+
+## What is stored—and what is not
+
+| Component | Used for | Boundary |
+| --- | --- | --- |
+| **React + Worker API** | One hosted UI and backend. | Server checks identity, role, roster, and team access. |
+| **D1** | Club setup, games, attendance, claims, synthetic policies, decisions, settlements. | Structured business source of truth. |
+| **R2** | Private receipt images. | Not a public policy/document store. |
+| **Nebius chat/vision model** | Tool choice, receipt fact extraction, grounded answers. | Current model ID appears in the signed-in AI / Agentic AI tab; it cannot approve or calculate balances. |
+| **Nebius embedding model** | Rank policy sections. | Temporary in-memory vector cache, not a vector database. |
+| **LangGraph JS** | Named audit nodes, shared state, and approval/review branch. | D1 audit history is **not** a durable LangGraph checkpointer. |
+| **Live trackers** | Show current audit and Q&A stages. | Not a durable replay of all model/tool events. |
+
+“Memory” here means saved **business state** in D1, receipts in R2, and short-lived execution/cache state. The hosted app does **not** implement mem0, long-term conversational memory, LangSmith tracing, autonomous learning, Pinecone, or a separate A2A service. It does not run the separate PostgreSQL backend.
+
+## Five-minute evaluator walkthrough
+
+1. **Scene:** Show Eagles teams and the AI / Agentic AI tab, including current Nebius model IDs.
+2. **LangGraph:** Submit an under-$50 claim with a clear receipt. Follow save → image facts → duplicate check → graph nodes → saved result. Point out why receipt verification differs from duplicate checking.
+3. **Human control:** Submit a different-payer, alcohol, missing-receipt, or exactly-$50 claim. Show the review branch and a treasurer decision with a reason.
+4. **RAG + MCP:** Ask who approves expenses and whether there is a maximum claim amount. Show selected tool, retrieval method, policy IDs, and checked answer or explicit fallback. Then call a tool in the MCP playground to show JSON-RPC.
+5. **Business result:** Show weighted settlement and payer credit. Emphasize that AI supplies evidence/explanations; code calculates money.
+
+## Code map for reviewers
+
+The visuals above are the intended first read. Code entry points, grouped in one place:
+
+| Area | Source |
+| --- | --- |
+| Submission, human decisions, admin setup, finalization | [Application API](app/api/%5B...path%5D/route.ts) |
+| Claim graph and live audit | [LangGraph nodes](lib/audit-graph.ts), [audit service](lib/claim-audit-service.ts) |
+| Receipt vision, tool planner, answer validation | [Nebius integration](lib/ai.ts) |
+| Club Q&A and policy search | [Q&A orchestrator](lib/club-qa.ts), [policy retrieval](lib/data.ts) |
+| MCP server and tools | [MCP endpoint](app/mcp/route.ts), [read-only tools](lib/mcp-tools.ts) |
+| Weighted settlement | [Finance logic](lib/finance.ts) |
+| Data and local run | [Dataset provenance](docs/datasets.md), [main README](README.md) |
+
+Policies and demo data are **synthetic educational assumptions**. The prototype does not move money or replace an audited accounting system.
