@@ -21,8 +21,8 @@ const CALLBACK_PATH = "/callback";
 export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
   const requestHeaders = await headers();
   const userId = requestHeaders.get(USER_ID_HEADER);
-  const email = requestHeaders.get(USER_EMAIL_HEADER);
-  if (!userId || !email) return null;
+  const email = requestHeaders.get(USER_EMAIL_HEADER)?.trim().toLowerCase();
+  if (!email) return null;
 
   const encodedFullName = requestHeaders.get(USER_FULL_NAME_HEADER);
   const fullName =
@@ -32,7 +32,9 @@ export async function getChatGPTUser(): Promise<ChatGPTUser | null> {
       : null;
 
   return {
-    userId,
+    // Some private Site requests currently carry verified email but omit the
+    // Site-scoped ID. Keep the page usable; actorFor still checks club access.
+    userId: userId ?? `email:${email}`,
     displayName: fullName ?? email,
     email,
     fullName,

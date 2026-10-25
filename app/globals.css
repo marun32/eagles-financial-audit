@@ -205,3 +205,10 @@ button { cursor: pointer; }
 .technology-table td:nth-child(3) { width: 37%; }
 @media(max-width:800px){.site-header { position: static; }.header-upper { padding: 12px 17px; }.horizontal-nav { padding: 0 10px; }.private-label { display: none; }.technology-intro { flex-direction: column; align-items: stretch; }.technology-status { min-width: 0; }}
 @media(max-width:540px){.account-name { display: none; }.header-account { gap: 7px; }.site-header .signout { margin-left: 0; font-size: 0; }.site-header .signout svg { width: 19px; height: 19px; }.site-header .brand strong { font-size: 16px; }.site-header .brand span { font-size: 8px; }}
+.mcp-controls { display: flex; flex-wrap: wrap; gap: 12px; align-items: end; margin: 18px 0; }
+.mcp-controls label { min-width: 220px; flex: 1; }
+.mcp-controls .primary { min-height: 37px; }
+.mcp-results { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+.mcp-results > div { min-width: 0; }
+.mcp-results pre { min-height: 100px; max-height: 360px; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 14px; border: 1px solid #dce9e1; border-radius: 8px; background: #f6faf8; color: #25463b; font-size: 11px; line-height: 1.45; }
+@media(max-width:800px){.mcp-results { grid-template-columns: 1fr; }}

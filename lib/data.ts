@@ -17,11 +17,27 @@ export async function first<T>(sql: string, ...params: unknown[]): Promise<T | n
 export async function run(sql: string, ...params: unknown[]): Promise<void> { await database().prepare(sql).bind(...params).run(); }
 
 export async function actorFor(request: Request): Promise<Actor> {
-  const userId = request.headers.get("oai-authenticated-user-id");
-  const email = request.headers.get("oai-authenticated-user-email")?.toLowerCase();
-  if (!userId || !email) throw new HttpError(401, "Sign in with ChatGPT to continue");
-  let actor = await first<Actor>("SELECT * FROM actors WHERE user_id = ?", userId);
+  const siteUserId = request.headers.get("oai-authenticated-user-id");
+  const email = request.headers.get("oai-authenticated-user-email")?.trim().toLowerCase();
+  if (!email) throw new HttpError(401, "Sign in with ChatGPT to continue");
+  const userId = siteUserId ?? `email:${email}`;
+  let actor = siteUserId ? await first<Actor>("SELECT * FROM actors WHERE user_id = ?", siteUserId) : null;
   if (actor) return actor;
+  // Private Sites may forward verified email without a Site-scoped ID. Use the
+  // existing email-bound membership in that case; never grant a new role here.
+  if (!siteUserId) {
+    actor = await first<Actor>("SELECT * FROM actors WHERE email = ?", email);
+    if (actor && !actor.user_id.startsWith("invite:")) return actor;
+  }
+  // An account first seen with email-only identity can be upgraded once the
+  // stable ID appears, without changing its role or linked player.
+  if (siteUserId) {
+    const emailActor = await first<Actor>("SELECT * FROM actors WHERE email = ? AND user_id = ?", email, `email:${email}`);
+    if (emailActor) {
+      await run("UPDATE actors SET user_id = ? WHERE user_id = ?", siteUserId, emailActor.user_id);
+      return { ...emailActor, user_id: siteUserId };
+    }
+  }
   const count = await first<{ n: number }>("SELECT COUNT(*) AS n FROM actors");
   if (count?.n === 0) {
     const localPreview = ["127.0.0.1", "localhost"].includes(new URL(request.url).hostname);

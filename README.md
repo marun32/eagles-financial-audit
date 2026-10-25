@@ -10,7 +10,9 @@ The Site manifest declares `DB`, `BUCKET`, and the `mcp` capability. Sites provi
 - `NEBIUS_API_KEY`: secret for model calls.
 - `NEBIUS_MODEL`: selected Nebius chat/vision model.
 
-The first authenticated admin selects **Load synthetic demo data**. This inserts the two Eagles teams for Spring and Fall 2026, ten completed games per team-season, mixed/overlapping rosters, system league/umpire expenses, and the full 39-section synthetic policy corpus. No real member data is migrated. The Site is owner-private by default. An admin can record an invitation in D1, but the member must also be granted Site access before they can sign in.
+The first authenticated admin selects **Load synthetic demo data**. This inserts the two Eagles teams for Spring and Fall 2026, ten completed games per team-season, mixed/overlapping rosters, system league/umpire expenses, and the synthetic policy corpus. No real member data is migrated. The Site is owner-private by default. An admin can record an invitation in D1, but the member must also be granted Site access before they can sign in.
+
+The player expense form accepts an optional receipt and submits, uploads when supplied, and audits from one button. The claim queue retains receipt replacement and re-audit controls for recovery and revisions. Policy Q&A and the policy library use the Site's actual read-only `/mcp` tools; the AI / Agentic AI tab includes an authenticated MCP tool playground. Claim, treasurer-decision, and admin writes remain protected API operations, not MCP tools. The hosted audit remains a TypeScript/D1 workflow, not LangGraph.
 
 ## Local checks
 
