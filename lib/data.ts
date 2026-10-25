@@ -160,6 +160,13 @@ export async function seedDemo(): Promise<{ created: boolean }> {
 }
 
 const policyVectorCache = new Map<string, number[]>();
+export async function ensureCurrentPolicySeed(): Promise<void> {
+  // One-time, version-gated update of the synthetic demo corpus after the
+  // supported receipt formats changed. Never overwrite equal/newer admin edits.
+  for (const policy of policySections.filter((section) => section.version > 1)) {
+    await run("UPDATE policies SET title=?,body=?,policy_type=?,version=? WHERE section_id=? AND version<?", policy.title, policy.body, policy.policy_type, policy.version, policy.section_id, policy.version);
+  }
+}
 function cosine(left: number[], right: number[]): number {
   if (left.length !== right.length) return -1;
   let dot = 0, leftNorm = 0, rightNorm = 0;
@@ -167,6 +174,7 @@ function cosine(left: number[], right: number[]): number {
   return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : -1;
 }
 export async function policySearch(question: string) {
+  await ensureCurrentPolicySeed();
   const tokens = question.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) => word.length > 2) ?? [];
   const policies = await rows<{ section_id: string; title: string; body: string; version: number }>("SELECT section_id,title,body,version FROM policies");
   if (!policies.length) return [];

@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { extractReceipt } from "../../../lib/ai";
-import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, first, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
+import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, ensureCurrentPolicySeed, first, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
 import { allocate } from "../../../lib/finance";
 import { executeClaimAudit } from "../../../lib/claim-audit-service";
 import { runPolicyQuestion } from "../../../lib/policy-qa";
@@ -30,7 +30,7 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
   }
   if (method === "GET" && path[0] === "teams" && path.length === 2) return json(await teamDetail(actor, path[1]));
   if (method === "GET" && path[0] === "teams" && path[2] === "settlement") return json(await settlementPreview(actor, path[1]));
-  if (method === "GET" && path.join("/") === "policies") return json(await rows("SELECT section_id,title,body,policy_type,version FROM policies ORDER BY section_id"));
+  if (method === "GET" && path.join("/") === "policies") { await ensureCurrentPolicySeed(); return json(await rows("SELECT section_id,title,body,policy_type,version FROM policies ORDER BY section_id")); }
   if (method === "GET" && path.join("/") === "admin/actors") { requireRole(actor, "admin"); return json(await rows("SELECT user_id,email,role,player_id FROM actors ORDER BY email")); }
   if (method === "GET" && path.join("/") === "admin/players") { requireRole(actor, "admin", "treasurer"); return json(await rows("SELECT * FROM players ORDER BY name")); }
   if (method === "GET" && path[0] === "claims" && path[2] === "revisions" && path[4] === "receipt") {
@@ -186,20 +186,13 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
     if (actor.role === "player" && actor.player_id !== claim.claimant_id) throw new HttpError(403, "Only the claimant can upload a receipt");
     if (["APPROVED", "REJECTED"].includes(claim.status)) throw new HttpError(409, "Claim is already decided");
     const form = await request.formData(); const file = form.get("file");
-    if (!(file instanceof File) || !["image/png", "image/jpeg", "application/pdf"].includes(file.type) || file.size < 1 || file.size > 5_000_000) throw new HttpError(400, "Use a PNG, JPEG, or PDF receipt under 5 MB");
+    if (!(file instanceof File) || !["image/png", "image/jpeg"].includes(file.type) || file.size < 1 || file.size > 5_000_000) throw new HttpError(400, "Use a PNG or JPEG receipt under 5 MB; PDF uploads are no longer accepted");
     const bytes = new Uint8Array(await file.arrayBuffer());
-    if (file.type === "application/pdf" && String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") throw new HttpError(400, "Invalid PDF signature");
     if (file.type === "image/png" && bytes.slice(0, 4).join(",") !== "137,80,78,71") throw new HttpError(400, "Invalid PNG signature");
     if (file.type === "image/jpeg" && (bytes[0] !== 255 || bytes[1] !== 216)) throw new HttpError(400, "Invalid JPEG signature");
-    const preview = form.get("preview");
-    let previewBytes: Uint8Array | null = null;
-    if (file.type === "application/pdf" && preview instanceof File && preview.type === "image/png" && preview.size > 0 && preview.size <= 5_000_000) {
-      previewBytes = new Uint8Array(await preview.arrayBuffer());
-      if (previewBytes.slice(0, 4).join(",") !== "137,80,78,71") throw new HttpError(400, "Invalid PDF preview image");
-    }
     const key = `receipts/${claim.team_season_id}/${claim.id}/${uuid()}`;
     await bucket().put(key, bytes, { httpMetadata: { contentType: file.type } });
-    const extraction = file.type === "application/pdf" && previewBytes ? { ...await extractReceipt(previewBytes, "image/png"), source: "PDF_FIRST_PAGE_CLIENT_RENDERED" } : await extractReceipt(bytes, file.type);
+    const extraction = await extractReceipt(bytes, file.type);
     await run("UPDATE claims SET receipt_key=?,receipt_name=?,receipt_type=?,receipt_extraction_json=?,status='SUBMITTED',updated_at=? WHERE id=?", key, safeText(file.name, 150), file.type, JSON.stringify(extraction), now(), claim.id);
     return json({ uploaded: true, extraction }, 201);
   }

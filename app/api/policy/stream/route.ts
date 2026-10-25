@@ -1,20 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { actorFor } from "../../../../lib/data";
-import { runPolicyQuestion } from "../../../../lib/policy-qa";
+import { runClubQuestion } from "../../../../lib/club-qa";
 
 export const runtime = "edge";
 
 export async function POST(request: NextRequest) {
   try {
-    await actorFor(request);
-    const input = await request.json() as { question?: unknown };
+    const actor = await actorFor(request);
+    const input = await request.json() as { question?: unknown; teamSeasonId?: unknown };
     if (typeof input.question !== "string" || !input.question.trim()) return NextResponse.json({ error: "Question required" }, { status: 400 });
     const encoder = new TextEncoder();
     const stream = new ReadableStream<Uint8Array>({
       async start(controller) {
         const send = (event: unknown) => controller.enqueue(encoder.encode(`${JSON.stringify(event)}\n`));
         try {
-          const result = await runPolicyQuestion(input.question as string, (progress) => send({ type: "progress", ...progress }));
+          const result = await runClubQuestion(input.question as string, actor, typeof input.teamSeasonId === "string" ? input.teamSeasonId : undefined, (progress) => send({ type: "progress", ...progress }));
           send({ type: "result", data: result });
         } catch (error) {
           send({ type: "error", message: error instanceof Error ? error.message : "Policy question failed" });

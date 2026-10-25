@@ -2,9 +2,9 @@
   {
     "section_id": "EXP-0",
     "title": "Definitions",
-    "body": "- **Claim:** A request to recognize and reimburse a player-paid expense for one team-season.\n- **Claimant:** The rostered player submitting the claim.\n- **Payer:** The player who paid the expense, has a valid roster membership in the same team-season, and would receive any approved reimbursement credit.\n- **Receipt:** An image or PDF containing evidence of the merchant, transaction date, purchased items, and total where available.\n- **Team-season:** One Eagles team participating in one configured Spring or Fall season.\n- **Completed match:** A match whose application status is `COMPLETED` and whose actual completion date has been recorded.\n- **Claim deadline:** The inclusive calendar date three calendar months after the final completed match date.\n- **Treasurer review:** A human decision that may approve, reject, request clarification, or adjust a claim with an audit reason.",
+    "body": "- **Claim:** A request to recognize and reimburse a player-paid expense for one team-season.\n- **Claimant:** The rostered player submitting the claim.\n- **Payer:** The player who paid the expense, has a valid roster membership in the same team-season, and would receive any approved reimbursement credit.\n- **Receipt:** An optional PNG or JPEG image containing evidence of the merchant, transaction date, purchased items, and total where available. New PDF uploads are not accepted in this MVP.\n- **Team-season:** One Eagles team participating in one configured Spring or Fall season.\n- **Completed match:** A match whose application status is `COMPLETED` and whose actual completion date has been recorded.\n- **Claim deadline:** The inclusive calendar date three calendar months after the final completed match date.\n- **Treasurer review:** A human decision that may approve, reject, request clarification, or adjust a claim with an audit reason.",
     "policy_type": "expense",
-    "version": 1
+    "version": 2
   },
   {
     "section_id": "EXP-1",
@@ -30,9 +30,9 @@
   {
     "section_id": "EXP-4",
     "title": "Required Claim Information",
-    "body": "Every submitted claim must identify:\n\n- Claimant and payer\n- Team-season\n- Expense date\n- Amount and USD currency\n- Category\n- Description\n\nA receipt image or PDF is optional for submission, but receipt status affects the approval path.",
+    "body": "Every submitted claim must identify:\n\n- Claimant and payer\n- Team-season\n- Expense date\n- Amount and USD currency\n- Category\n- Description\n\nA PNG or JPEG receipt image is optional for submission, but receipt status affects the approval path. New PDF uploads are not accepted in this MVP.",
     "policy_type": "expense",
-    "version": 1
+    "version": 2
   },
   {
     "section_id": "EXP-5",

@@ -2,9 +2,6 @@
 
 import { useEffect, useState } from "react";
 import { callMcpTool } from "./mcp-client";
-import { streamWorkflow } from "./progress-client";
-import WorkflowTracker, { WorkflowStep } from "./workflow-tracker";
-import type { PolicyResult } from "./policy-qa-panel";
 
 type Destination = "claims" | "policy" | "settlement";
 
@@ -22,8 +19,8 @@ const capabilities: Array<{
   },
   {
     business: "Read a receipt and check the claim",
-    implementation: "Nebius vision extracts facts from PNG/JPEG images and browser-rendered PDF page 1; the original PDF remains private in R2. TypeScript rules compare date, vendor, amount, alcohol, duplicates, and the $50 threshold.",
-    boundary: "PDF extraction is first-page only and the client-rendered image is not cryptographically verified against the stored PDF, so every PDF claim requires treasurer review. The model never approves a claim.",
+    implementation: "Nebius vision extracts facts from optional PNG/JPEG receipts stored privately in R2. TypeScript rules compare date, vendor, amount, alcohol, duplicates, and the $50 threshold.",
+    boundary: "New PDF uploads are not accepted. Historical PDFs remain available for review but never auto-approve. The model never approves a claim.",
     status: "Live",
   },
   {
@@ -33,9 +30,9 @@ const capabilities: Array<{
     status: "Live",
   },
   {
-    business: "Explain an Eagles policy",
-    implementation: "Nebius Qwen3 embeddings rank D1 policy sections by cosine similarity; Nebius Qwen3.8 answers with validated section-ID citations.",
-    boundary: "The small policy corpus is embedded on demand and cached per Worker isolate; lexical search is a fallback if embeddings fail. This is not a durable Pinecone index.",
+    business: "Answer policy and club-data questions",
+    implementation: "Nebius selects bounded MCP-exposed read tools for policy sections, teams, overview, roster, or settlement. Policy retrieval uses embeddings or keyword fallback; Nebius answers from returned evidence with validated citations.",
+    boundary: "Tool selection falls back to bounded rules if Nebius fails. The small policy corpus is embedded on demand, not stored in Pinecone. Financial calculations stay deterministic.",
     status: "Live",
   },
   {
@@ -46,8 +43,8 @@ const capabilities: Array<{
   },
   {
     business: "Let an agent query club information",
-    implementation: "Authenticated /mcp endpoint exposes read-only tools for team-seasons, overview, settlement, policy sections, and cited policy answers.",
-    boundary: "External MCP clients use /mcp. The Q&A progress bridge calls the same policy implementation but is not itself JSON-RPC. Claim, decision, and configuration writes stay on the protected application API.",
+    implementation: "Authenticated /mcp exposes read-only team, overview, roster, settlement, policy-search, and answer tools. The club assistant selects from these shared tool implementations.",
+    boundary: "External MCP clients use JSON-RPC at /mcp. The streaming Q&A bridge uses the same authorized tool implementations but is not MCP transport. Financial writes remain protected application APIs.",
     status: "Live",
   },
   {
@@ -58,7 +55,7 @@ const capabilities: Array<{
   },
   {
     business: "Show each workflow step to an evaluator",
-    implementation: "Submission and re-audit stream actual LangGraph node completions. Policy Q&A streams tool, retrieval, source metadata, and model status.",
+    implementation: "Submission and re-audit stream actual LangGraph node completions. Club Q&A streams model tool selection, tool calls, retrieval metadata, and answer status.",
     boundary: "These live views are not durable per-claim or per-question execution histories. The process map above remains illustrative.",
     status: "Live",
   },
@@ -79,12 +76,12 @@ export default function TechnologyOverview({ teamId, onNavigate }: { teamId: str
 
     <section className="card"><div className="card-head"><div><span className="section-kicker">IMPLEMENTATION MAP</span><h2>How the technology serves the club</h2></div></div><div className="table-wrap"><table className="technology-table"><thead><tr><th>Business step</th><th>Current implementation</th><th>Safety / scope boundary</th><th>Status</th></tr></thead><tbody>{capabilities.map((item) => <tr key={item.business}><td><strong>{item.business}</strong></td><td>{item.implementation}</td><td>{item.boundary}</td><td><span className={`tech-badge ${item.status === "Live" ? "live" : item.status === "Planned" ? "planned" : "reference"}`}>{item.status}</span></td></tr>)}</tbody></table></div></section>
 
-    <div className="grid-two"><section className="card"><div className="card-head"><div><span className="section-kicker">RETRIEVAL-AUGMENTED Q&A</span><h2>Question → sources → answer</h2></div></div><p className="muted">Policy Q&A embeds the question and synthetic D1 policy sections, retrieves the closest sections, and sends only those sections to Nebius for an answer with section IDs. The result reports whether vector retrieval or lexical fallback ran.</p><button className="outline" onClick={() => onNavigate("policy")}>Try policy Q&A →</button></section><section className="card"><div className="card-head"><div><span className="section-kicker">MCP & AGENT COMMUNICATION</span><h2>Tools, not peer agents</h2></div></div><p className="muted">The MCP server exposes read-only tools to authorized clients. Use the panel below to make a real MCP call. The MVP has no agent-to-agent communication protocol.</p><button className="outline" onClick={() => onNavigate("settlement")}>View settlement data →</button></section></div>
+    <div className="grid-two"><section className="card"><div className="card-head"><div><span className="section-kicker">TOOL-ROUTED Q&A</span><h2>Question → tool choice → evidence → answer</h2></div></div><p className="muted">Nebius first selects read-only tools. Policy questions use vector retrieval with keyword fallback; live roster and settlement questions use authorized D1-backed tools. Answer generation uses only returned evidence and reports tool and citation status.</p><button className="outline" onClick={() => onNavigate("policy")}>Try club Q&A →</button></section><section className="card"><div className="card-head"><div><span className="section-kicker">MCP & AGENT COMMUNICATION</span><h2>Tools, not peer agents</h2></div></div><p className="muted">The MCP server exposes read-only tools to authorized clients. Use the panel below to make a real MCP call. The MVP has no agent-to-agent communication protocol.</p><button className="outline" onClick={() => onNavigate("settlement")}>View settlement data →</button></section></div>
     <McpPlayground teamId={teamId} />
   </div>;
 }
 
-const mcpTools = ["list_team_seasons", "get_team_overview", "get_team_settlement", "list_policy_sections", "answer_policy_question"] as const;
+const mcpTools = ["list_team_seasons", "get_team_overview", "get_team_settlement", "get_team_roster", "search_policy_sections", "list_policy_sections", "answer_policy_question", "answer_club_question"] as const;
 type McpTool = typeof mcpTools[number];
 
 function McpPlayground({ teamId }: { teamId: string }) {
@@ -95,19 +92,17 @@ function McpPlayground({ teamId }: { teamId: string }) {
   const [response, setResponse] = useState<unknown>(null);
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
-  const [steps, setSteps] = useState<WorkflowStep[]>([]);
-  const args = tool === "get_team_settlement" ? { teamSeasonId: selectedTeam || teamId } : tool === "answer_policy_question" ? { question } : {};
+  const args = tool === "get_team_settlement" || tool === "get_team_roster" ? { teamSeasonId: selectedTeam || teamId } : tool === "answer_club_question" ? { question, teamSeasonId: selectedTeam || teamId } : tool === "answer_policy_question" || tool === "search_policy_sections" ? { question } : {};
 
-  return <section className="card"><div className="card-head"><div><span className="section-kicker">REAL MCP INTERACTION</span><h2>Read-only tool playground</h2></div><span className="tech-badge live">POST /api/mcp</span></div><p className="muted">Choose a tool and run it as your signed-in club role. Other tools use the JSON-RPC browser bridge; policy Q&A uses a live progress bridge to the same <code>answer_policy_question</code> implementation exposed by /mcp.</p>
-    <form className="mcp-controls" onSubmit={(event) => { event.preventDefault(); setBusy(true); setError(""); setResponse(null); setSteps([]); setRequest({ method: "tools/call", params: { name: tool, arguments: args } }); const work = tool === "answer_policy_question" ? streamWorkflow<PolicyResult, WorkflowStep>("/api/policy/stream", { question }, (progress) => setSteps((current) => [...current, progress])) : callMcpTool(tool, args); void work.then(setResponse).catch((cause) => setError(cause instanceof Error ? cause.message : "MCP call failed")).finally(() => setBusy(false)); }}>
+  return <section className="card"><div className="card-head"><div><span className="section-kicker">REAL MCP INTERACTION</span><h2>Read-only tool playground</h2></div><span className="tech-badge live">POST /api/mcp</span></div><p className="muted">Choose a tool and run an actual authenticated JSON-RPC call. For live sub-step progress and agent-directed routing, use the Club Q&A tab.</p>
+    <form className="mcp-controls" onSubmit={(event) => { event.preventDefault(); setBusy(true); setError(""); setResponse(null); setRequest({ method: "tools/call", params: { name: tool, arguments: args } }); void callMcpTool(tool, args).then(setResponse).catch((cause) => setError(cause instanceof Error ? cause.message : "MCP call failed")).finally(() => setBusy(false)); }}>
       <label>Tool<select value={tool} onChange={(event) => setTool(event.target.value as McpTool)}>{mcpTools.map((name) => <option key={name}>{name}</option>)}</select></label>
-      {tool === "get_team_settlement" && <label>Team-season ID<input value={selectedTeam || teamId} onChange={(event) => setSelectedTeam(event.target.value)} required /></label>}
-      {tool === "answer_policy_question" && <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} required /></label>}
+      {(tool === "get_team_settlement" || tool === "get_team_roster" || tool === "answer_club_question") && <label>Team-season ID<input value={selectedTeam || teamId} onChange={(event) => setSelectedTeam(event.target.value)} required /></label>}
+      {(tool === "answer_policy_question" || tool === "answer_club_question" || tool === "search_policy_sections") && <label>Question<input value={question} onChange={(event) => setQuestion(event.target.value)} required /></label>}
       <button className="primary" disabled={busy}>{busy ? "Calling tool…" : "Run MCP tool"}</button>
     </form>
     {error && <div className="alert error" role="alert">{error}</div>}
-    <WorkflowTracker title="Policy tool progress" steps={steps} active={busy} />
-    {tool === "answer_policy_question" && response !== null && <div className="answer"><span className="section-kicker">POLICY ANSWER · {(response as PolicyResult).modelStatus}</span><p>{(response as PolicyResult).answer}</p><small>Citations: {(response as PolicyResult).citations.join(", ") || "None"}</small></div>}
+    {(tool === "answer_policy_question" || tool === "answer_club_question") && response !== null && <div className="answer"><span className="section-kicker">GROUNDED ANSWER · {(response as { modelStatus: string }).modelStatus}</span><p>{(response as { answer: string }).answer}</p><small>Citations: {(response as { citations: string[] }).citations.join(", ") || "None"}</small></div>}
     {(request !== null || response !== null) && <div className="mcp-results"><div><span className="section-kicker">REQUEST</span><pre>{JSON.stringify(request, null, 2)}</pre></div><div><span className="section-kicker">TOOL RESPONSE</span><pre>{response !== null ? JSON.stringify(response, null, 2) : busy ? "Waiting for MCP response…" : "No response"}</pre></div></div>}
   </section>;
 }
