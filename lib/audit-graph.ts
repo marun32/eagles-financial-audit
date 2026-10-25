@@ -1,5 +1,5 @@
 import { Annotation, END, START, StateGraph } from "@langchain/langgraph";
-import { Claim, evaluateClaim } from "./data";
+import { Claim, evaluateClaim, rows } from "./data";
 
 type Extraction = { status?: string; fields?: Record<string, unknown> } | null;
 type Result = ReturnType<typeof evaluateClaim>;
@@ -35,10 +35,24 @@ const auditGraph = new StateGraph(AuditState)
     if (result.findings.some((finding) => finding.startsWith("RECEIPT_") || finding === "ALCOHOL_REVIEW" || finding === "PDF_PREVIEW_REQUIRES_REVIEW") && !result.citations.includes("EXP-6")) result.citations.push("EXP-6");
     return { result, steps: ["route_review"] };
   })
+  .addNode("retrieve_policy", async (state) => {
+    const result: Result = { ...state.result, findings: [...state.result.findings], citations: [...state.result.citations] };
+    const placeholders = result.citations.map(() => "?").join(",");
+    const found = await rows<{ section_id: string }>(`SELECT section_id FROM policies WHERE section_id IN (${placeholders})`, ...result.citations);
+    const ids = new Set(found.map((section) => section.section_id));
+    if (result.citations.some((id) => !ids.has(id))) result.findings.push("POLICY_EVIDENCE_MISSING");
+    if (result.findings.length) result.route = "REVIEW";
+    return { result, steps: ["retrieve_policy"] };
+  })
+  .addNode("auto_approve", () => ({ steps: ["auto_approve"] }))
+  .addNode("handoff_to_treasurer", () => ({ steps: ["handoff_to_treasurer"] }))
   .addEdge(START, "evaluate_rules")
   .addEdge("evaluate_rules", "verify_receipt")
   .addEdge("verify_receipt", "route_review")
-  .addEdge("route_review", END)
+  .addEdge("route_review", "retrieve_policy")
+  .addConditionalEdges("retrieve_policy", (state) => state.result.route === "AUTO_APPROVE" ? "auto_approve" : "handoff_to_treasurer")
+  .addEdge("auto_approve", END)
+  .addEdge("handoff_to_treasurer", END)
   .compile();
 
 export async function runClaimAuditGraph(claim: Claim, duplicate: boolean, extraction: Extraction): Promise<{ result: Result; steps: string[] }> {

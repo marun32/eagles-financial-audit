@@ -25,7 +25,7 @@ const capabilities: Array<{
   },
   {
     business: "Route a claim and involve the treasurer",
-    implementation: "LangGraph JS runs rule evaluation, receipt verification, and review routing. D1 audit-run records track auto-approval, review, clarification, revision, and human decision.",
+    implementation: "LangGraph JS runs rule evaluation, receipt verification, D1 policy lookup, and a conditional auto-approval versus treasurer-handoff branch. D1 audit-run records track clarification, revision, and human decision.",
     boundary: "D1 persists the business decision and review state; the hosted graph does not yet have a durable LangGraph checkpointer. Treasurer decisions require a reason.",
     status: "Live",
   },
@@ -49,15 +49,15 @@ const capabilities: Array<{
   },
   {
     business: "Demonstrate LangGraph orchestration",
-    implementation: "Hosted LangGraph JS runs the claim-audit nodes. The separate local Python/PostgreSQL backend has a more complete checkpointed graph with human interrupts.",
+    implementation: "Hosted LangGraph JS runs claim-audit nodes, calls D1 policy lookup, and branches to automatic approval or human handoff. The separate local Python/PostgreSQL backend has a more complete checkpointed graph with human interrupts.",
     boundary: "Hosted LangGraph nodes run live, but human approval resumes through application/D1 state rather than a graph checkpoint.",
     status: "Live",
   },
   {
     business: "Show each workflow step to an evaluator",
-    implementation: "A per-claim audit trace and a policy retrieval trace with real step statuses.",
-    boundary: "These visual traces are still planned; the process map above is illustrative, not live LangGraph execution.",
-    status: "Planned",
+    implementation: "The latest submitted claim displays the LangGraph nodes returned by its audit, and each policy answer displays the MCP/retrieval/source path used.",
+    boundary: "These latest-run views are not durable per-claim or per-question execution histories. The process map above remains illustrative.",
+    status: "Live",
   },
 ];
 
