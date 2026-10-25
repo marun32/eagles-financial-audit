@@ -6,7 +6,9 @@ type McpResponse = {
 };
 
 export async function callMcpTool<T>(name: string, args: Record<string, unknown> = {}): Promise<T> {
-  const response = await fetch("/mcp", {
+  // Sites reserves /mcp for external MCP clients. Browser requests use the
+  // same JSON-RPC handler through a normal authenticated application route.
+  const response = await fetch("/api/mcp", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ jsonrpc: "2.0", id: crypto.randomUUID(), method: "tools/call", params: { name, arguments: args } }),

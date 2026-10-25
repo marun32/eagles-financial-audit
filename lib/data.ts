@@ -1,6 +1,7 @@
 import { env } from "cloudflare:workers";
 import { addMonths, allocate, clubToday, DEFAULT_MULTIPLIERS } from "./finance";
 import policySections from "./policy-seed.json";
+import { embedTexts } from "./ai";
 
 export type Actor = { user_id: string; email: string; role: "admin" | "treasurer" | "player"; player_id: string | null };
 export type Team = { id: string; team_name: string; season_kind: string; season_year: number; league_fee_cents: number; umpire_fee_cents: number; scheduled_games: number; season_start: string; season_end: string; multipliers_json: string; claim_deadline: string | null; status: string; config_version: number };
@@ -158,11 +159,33 @@ export async function seedDemo(): Promise<{ created: boolean }> {
   return { created: true };
 }
 
+const policyVectorCache = new Map<string, number[]>();
+function cosine(left: number[], right: number[]): number {
+  if (left.length !== right.length) return -1;
+  let dot = 0, leftNorm = 0, rightNorm = 0;
+  for (let i = 0; i < left.length; i++) { dot += left[i] * right[i]; leftNorm += left[i] ** 2; rightNorm += right[i] ** 2; }
+  return leftNorm && rightNorm ? dot / Math.sqrt(leftNorm * rightNorm) : -1;
+}
 export async function policySearch(question: string) {
   const tokens = question.toLowerCase().match(/[a-z0-9]+/g)?.filter((word) => word.length > 2) ?? [];
   const policies = await rows<{ section_id: string; title: string; body: string; version: number }>("SELECT section_id,title,body,version FROM policies");
-  return policies.map((p) => ({ ...p, score: tokens.reduce((n, token) => n + ((`${p.title} ${p.body}`).toLowerCase().includes(token) ? 1 : 0), 0) }))
-    .filter((p) => p.score > 0).sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)).slice(0, 4);
+  if (!policies.length) return [];
+  const lexical = policies.map((p) => ({ ...p, score: tokens.reduce((n, token) => n + ((`${p.title} ${p.body}`).toLowerCase().includes(token) ? 1 : 0), 0), retrieval_method: "lexical" }));
+  if (env.NEBIUS_API_KEY && env.NEBIUS_EMBEDDING_MODEL) {
+    try {
+      const keyFor = (p: typeof policies[number]) => `${env.NEBIUS_EMBEDDING_MODEL}:${p.section_id}:${p.version}:${p.title}:${p.body}`;
+      const missing = policies.filter((p) => !policyVectorCache.has(keyFor(p)));
+      const inputs = [question, ...missing.map((p) => `${p.title}\n${p.body}`)];
+      const vectors = await embedTexts(inputs);
+      missing.forEach((p, index) => policyVectorCache.set(keyFor(p), vectors[index + 1]));
+      const query = vectors[0];
+      return policies.map((p) => ({ ...p, score: cosine(query, policyVectorCache.get(keyFor(p))!), retrieval_method: "vector" }))
+        .sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)).slice(0, 4);
+    } catch {
+      // Keep policy Q&A available when the embedding model or provider fails.
+    }
+  }
+  return lexical.filter((p) => p.score > 0).sort((a, b) => b.score - a.score || a.section_id.localeCompare(b.section_id)).slice(0, 4);
 }
 export function safeText(value: unknown, max = 500): string { return typeof value === "string" ? value.trim().slice(0, max) : ""; }
 export function uuid(): string { return crypto.randomUUID(); }

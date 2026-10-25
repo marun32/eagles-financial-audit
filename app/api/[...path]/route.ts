@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { answerPolicy, extractReceipt } from "../../../lib/ai";
-import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, evaluateClaim, first, policySearch, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
+import { Actor, Claim, HttpError, actorFor, addMonths, assertTeamAccess, bucket, claimOr404, clubToday, database, first, policySearch, requireRole, rows, run, safeText, seedDemo, settlementPreview, teamDetail, teamOr404, teamsFor, uuid } from "../../../lib/data";
 import { allocate } from "../../../lib/finance";
+import { runClaimAuditGraph } from "../../../lib/audit-graph";
 
 export const runtime = "edge";
 type Context = { params: Promise<{ path: string[] }> };
@@ -189,9 +190,15 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
     if (file.type === "application/pdf" && String.fromCharCode(...bytes.slice(0, 5)) !== "%PDF-") throw new HttpError(400, "Invalid PDF signature");
     if (file.type === "image/png" && bytes.slice(0, 4).join(",") !== "137,80,78,71") throw new HttpError(400, "Invalid PNG signature");
     if (file.type === "image/jpeg" && (bytes[0] !== 255 || bytes[1] !== 216)) throw new HttpError(400, "Invalid JPEG signature");
+    const preview = form.get("preview");
+    let previewBytes: Uint8Array | null = null;
+    if (file.type === "application/pdf" && preview instanceof File && preview.type === "image/png" && preview.size > 0 && preview.size <= 5_000_000) {
+      previewBytes = new Uint8Array(await preview.arrayBuffer());
+      if (previewBytes.slice(0, 4).join(",") !== "137,80,78,71") throw new HttpError(400, "Invalid PDF preview image");
+    }
     const key = `receipts/${claim.team_season_id}/${claim.id}/${uuid()}`;
     await bucket().put(key, bytes, { httpMetadata: { contentType: file.type } });
-    const extraction = await extractReceipt(bytes, file.type);
+    const extraction = file.type === "application/pdf" && previewBytes ? { ...await extractReceipt(previewBytes, "image/png"), source: "PDF_FIRST_PAGE_CLIENT_RENDERED" } : await extractReceipt(bytes, file.type);
     await run("UPDATE claims SET receipt_key=?,receipt_name=?,receipt_type=?,receipt_extraction_json=?,status='SUBMITTED',updated_at=? WHERE id=?", key, safeText(file.name, 150), file.type, JSON.stringify(extraction), now(), claim.id);
     return json({ uploaded: true, extraction }, 201);
   }
@@ -200,26 +207,15 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
     if (actor.role === "player" && actor.player_id !== claim.claimant_id) throw new HttpError(403, "Claim access denied");
     if (["APPROVED", "REJECTED"].includes(claim.status)) return json({ id: claim.id, status: claim.status, route: claim.route });
     const duplicate = await first("SELECT id FROM claims WHERE id<>? AND team_season_id=? AND payer_id=? AND amount_cents=? AND vendor=? AND expense_date=? LIMIT 1", claim.id, claim.team_season_id, claim.payer_id, claim.amount_cents, claim.vendor, claim.expense_date);
-    const result = evaluateClaim(claim, !!duplicate);
     const extraction = claim.receipt_extraction_json ? JSON.parse(claim.receipt_extraction_json) as { status?: string; fields?: Record<string, unknown> } : null;
-    if (claim.receipt_key && extraction?.status !== "EXTRACTED") result.findings.push("RECEIPT_EXTRACTION_UNVERIFIED");
-    if (extraction?.status === "EXTRACTED") {
-      const facts = extraction.fields ?? {};
-      if (facts.readability !== "CLEAR" || typeof facts.vendor !== "string" || typeof facts.transaction_date !== "string" || !Number.isSafeInteger(facts.total_cents) || typeof facts.alcohol_present !== "boolean") result.findings.push("RECEIPT_EXTRACTION_INCOMPLETE");
-      if (facts.alcohol_present === true && !result.findings.includes("ALCOHOL_REVIEW")) result.findings.push("ALCOHOL_REVIEW");
-      if (facts.total_cents !== claim.amount_cents) result.findings.push("RECEIPT_TOTAL_MISMATCH");
-      if (typeof facts.vendor === "string" && facts.vendor.trim().toLowerCase() !== claim.vendor.trim().toLowerCase()) result.findings.push("RECEIPT_VENDOR_MISMATCH");
-      if (facts.transaction_date !== claim.expense_date) result.findings.push("RECEIPT_DATE_MISMATCH");
-    }
-    if (result.findings.length) result.route = "REVIEW";
-    if (result.findings.some((finding) => finding.startsWith("RECEIPT_") || finding === "ALCOHOL_REVIEW") && !result.citations.includes("EXP-6")) result.citations.push("EXP-6");
+    const { result, steps } = await runClaimAuditGraph(claim, !!duplicate, extraction);
     const status = result.route === "AUTO_APPROVE" ? "APPROVED" : "NEEDS_REVIEW";
     const runId = uuid();
     await database().batch([
       database().prepare("UPDATE claims SET status=?,route=?,findings_json=?,policy_citations_json=?,approved_amount_cents=?,updated_at=? WHERE id=?").bind(status, result.route, JSON.stringify(result.findings), JSON.stringify(result.citations), status === "APPROVED" ? claim.amount_cents : null, now(), claim.id),
       database().prepare("INSERT INTO audit_runs (id,claim_id,stage,route,findings_json,created_at,resolved_at) VALUES (?,?,?,?,?,?,?)").bind(runId, claim.id, status === "APPROVED" ? "COMPLETE" : "WAITING_FOR_TREASURER", result.route, JSON.stringify(result.findings), now(), status === "APPROVED" ? now() : null),
     ]);
-    return json({ id: claim.id, runId, status, ...result });
+    return json({ id: claim.id, runId, status, graphSteps: steps, ...result });
   }
   if (path[0] === "claims" && path[2] === "decision") {
     requireRole(actor, "admin", "treasurer"); const claim = await claimOr404(path[1]);
@@ -270,7 +266,7 @@ async function dispatch(request: NextRequest, path: string[], actor: Actor): Pro
     const input = await body(request); const question = safeText(input.question, 500);
     if (!question) throw new HttpError(400, "Question required");
     const sections = await policySearch(question);
-    return json({ answer: await answerPolicy(question, sections), citations: sections.map((s) => ({ sectionId: s.section_id, title: s.title, version: s.version })), source: "synthetic Eagles MVP policy" });
+    return json({ answer: await answerPolicy(question, sections), citations: sections.map((s) => ({ sectionId: s.section_id, title: s.title, version: s.version })), source: "synthetic Eagles MVP policy", retrieval: sections[0]?.retrieval_method ?? "none" });
   }
   throw new HttpError(404, "Route not found");
 }

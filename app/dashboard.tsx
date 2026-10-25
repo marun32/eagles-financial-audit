@@ -4,6 +4,7 @@ import { useCallback, useEffect, useState } from "react";
 import { Activity, ChartNoAxesCombined, CircleHelp, ClipboardCheck, Cpu, LogOut, Settings2, ShieldCheck } from "lucide-react";
 import TechnologyOverview from "./technology-overview";
 import { callMcpTool } from "./mcp-client";
+import { pdfPreview } from "./pdf-preview";
 
 type Team = { id: string; team_name: string; season_kind: string; season_year: number; league_fee_cents: number; umpire_fee_cents: number; scheduled_games: number; season_start: string; season_end: string; multipliers_json: string; claim_deadline: string | null; status: string; config_version: number };
 type Actor = { email: string; role: string; player_id: string | null };
@@ -18,10 +19,26 @@ type Tab = "overview" | "claims" | "settlement" | "admin" | "policy" | "technolo
 const money = (cents: number) => new Intl.NumberFormat("en-US", { style: "currency", currency: "USD" }).format(cents / 100);
 const today = () => new Intl.DateTimeFormat("en-CA", { timeZone: "America/New_York", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
 async function api<T>(path: string, method = "GET", data?: unknown): Promise<T> {
+  if (data instanceof FormData && path.endsWith("/receipt") && !data.has("preview")) {
+    const file = data.get("file");
+    if (file instanceof File && file.type === "application/pdf") {
+      try { const preview = await pdfPreview(file); if (preview && preview.size <= 5_000_000) data.append("preview", preview, "page-1.png"); }
+      catch { /* The original PDF can still be stored and reviewed manually. */ }
+    }
+  }
   const response = await fetch(`/api/${path}`, { method, headers: data instanceof FormData ? undefined : data === undefined ? undefined : { "Content-Type": "application/json" }, body: data === undefined ? undefined : data instanceof FormData ? data : JSON.stringify(data), cache: "no-store" });
   const result = await response.json().catch(() => ({})) as { error?: string };
   if (!response.ok) throw new Error(result.error ?? `Request failed (${response.status})`);
   return result as T;
+}
+
+async function receiptForm(file: File): Promise<FormData> {
+  const form = new FormData(); form.append("file", file);
+  if (file.type === "application/pdf") {
+    try { const preview = await pdfPreview(file); if (preview && preview.size <= 5_000_000) form.append("preview", preview, "page-1.png"); }
+    catch { /* Store the PDF and route extraction uncertainty to human review. */ }
+  }
+  return form;
 }
 
 export default function Dashboard({ displayName, signOut }: { displayName: string; signOut: string }) {
@@ -39,6 +56,7 @@ export default function Dashboard({ displayName, signOut }: { displayName: strin
   const [notice, setNotice] = useState("");
   const [question, setQuestion] = useState("");
   const [answer, setAnswer] = useState<{ answer: string; citations: Array<{ sectionId: string }> } | null>(null);
+  const [lastAudit, setLastAudit] = useState<{ claimId: string; status: string; route: string; graphSteps: string[]; receipt: boolean } | null>(null);
   const [reason, setReason] = useState("");
   const [receiptInputKey, setReceiptInputKey] = useState(0);
   const [claimForm, setClaimForm] = useState({ amount: "", category: "Equipment", vendor: "", description: "", expenseDate: today(), payerId: "", alcohol: false });
@@ -67,7 +85,7 @@ export default function Dashboard({ displayName, signOut }: { displayName: strin
       catch (e) { setError(e instanceof Error ? e.message : "Could not load policy sections"); }
     }
   }, []);
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => { const timer = window.setTimeout(() => void refresh(), 0); return () => window.clearTimeout(timer); }, [refresh]);
   async function act<T>(work: () => Promise<T>, success: string, selected = teamId) {
     setBusy(true); setError(""); setNotice("");
     try { const result = await work(); setNotice(success); await refresh(selected); return result; }
@@ -76,6 +94,7 @@ export default function Dashboard({ displayName, signOut }: { displayName: strin
   }
   async function submitExpense(receipt: File | null) {
     setBusy(true); setError(""); setNotice("");
+    setLastAudit(null);
     let claimId: string | null = null;
     try {
       const created = await api<{ id: string }>("claims", "POST", {
@@ -90,17 +109,16 @@ export default function Dashboard({ displayName, signOut }: { displayName: strin
       });
       claimId = created.id;
       if (receipt) {
-        const form = new FormData();
-        form.append("file", receipt);
         try {
-          await api(`claims/${claimId}/receipt`, "POST", form);
+          await api(`claims/${claimId}/receipt`, "POST", await receiptForm(receipt));
         } catch (uploadError) {
           // A saved claim must not appear complete but remain unaudited.
           await api(`claims/${claimId}/audit`, "POST", {});
           throw new Error(`Claim saved, but the receipt upload failed: ${uploadError instanceof Error ? uploadError.message : "Unknown error"}. It was routed for review; you can replace the receipt in the queue.`);
         }
       }
-      const audit = await api<{ status: string }>(`claims/${claimId}/audit`, "POST", {});
+      const audit = await api<{ status: string; route: string; graphSteps: string[] }>(`claims/${claimId}/audit`, "POST", {});
+      setLastAudit({ claimId, status: audit.status, route: audit.route, graphSteps: audit.graphSteps, receipt: !!receipt });
       setNotice(`Expense submitted and audited: ${audit.status.replaceAll("_", " ").toLowerCase()}.`);
       setClaimForm({ amount: "", category: "Equipment", vendor: "", description: "", expenseDate: today(), payerId: "", alcohol: false });
       setReceiptInputKey((current) => current + 1);
@@ -132,6 +150,7 @@ export default function Dashboard({ displayName, signOut }: { displayName: strin
       {!teams.length && actor?.role === "admin" && <div className="empty-state"><h2>Start the Eagles workspace</h2><p>Load synthetic Spring and Fall 2026 teams, 10 games per season, rosters, fees, and policies. No real member data is imported.</p><button className="primary" disabled={busy} onClick={() => void act(() => api("admin/seed", "POST", {}), "Synthetic demo data loaded")}>Load synthetic demo data</button></div>}
       {tab === "overview" && !!teams.length && <><div className="metrics"><Metric label="SEASON EXPENSE POOL" value={money(overview.reduce((n, x) => n + x.poolCents, 0))} note="System fees + approved claims" /><Metric label="CLAIMS AWAITING ACTION" value={String(overview.reduce((n, x) => n + x.pendingClaims, 0))} note="Across visible seasons" /><Metric label="TEAM-SEASONS" value={String(overview.length)} note="Spring and Fall, by league" /></div><div className="grid-two"><section className="card"><div className="card-head"><div><span className="section-kicker">SPENDING BY TEAM-SEASON</span><h2>Expense distribution</h2></div><ChartNoAxesCombined size={20} /></div>{overview.map((item) => <button key={item.team.id} className="bar-row" onClick={() => { void refresh(item.team.id); setTab("settlement"); }}><div><strong>{item.team.team_name}</strong><small>{item.team.season_kind} {item.team.season_year}</small></div><div className="bar-track"><div style={{ width: `${item.poolCents / maxPool * 100}%` }} /></div><strong>{money(item.poolCents)}</strong></button>)}</section><section className="card"><div className="card-head"><div><span className="section-kicker">SELECTED SEASON</span><h2>{chosen?.team_name}</h2></div><Pill status={chosen?.status ?? "OPEN"} /></div><div className="info-list"><Info label="League fee" value={money(chosen?.league_fee_cents ?? 0)} /><Info label="Umpire fee / completed game" value={money(chosen?.umpire_fee_cents ?? 0)} /><Info label="Completed games" value={`${detail?.games.filter((g) => g.status === "COMPLETED").length ?? 0} / ${chosen?.scheduled_games ?? 0}`} /><Info label="Rostered players" value={String(detail?.roster.length ?? 0)} /><Info label="Claim deadline" value={chosen?.claim_deadline ?? "Not established"} /></div></section></div><section className="card"><div className="card-head"><div><span className="section-kicker">RECENT ACTIVITY</span><h2>Claims</h2></div><button className="text-button" onClick={() => setTab("claims")}>View all →</button></div><ClaimTable claims={(detail?.claims ?? []).slice(0, 5)} /></section></>}
       {tab === "claims" && detail && <div className="stack">
+        {lastAudit && detail.claims.some((claim) => claim.id === lastAudit.claimId) && <section className="card"><div className="card-head"><div><span className="section-kicker">LIVE LANGGRAPH RESULT</span><h2>Claim audit path</h2></div><Pill status={lastAudit.status} /></div><div className="technology-flow" aria-label="Completed claim audit steps"><span>Claim saved</span>{lastAudit.receipt && <span>Receipt extraction</span>}{lastAudit.graphSteps.map((step) => <span key={step}>{step.replaceAll("_", " ")}</span>)}<span>{lastAudit.route === "AUTO_APPROVE" ? "Auto-approved" : "Treasurer review"}</span></div><p className="footnote">Completed steps returned by the hosted LangGraph audit for claim {lastAudit.claimId}. Human review is persisted separately in D1.</p></section>}
         <div className="grid-two"><section className="card"><div className="card-head"><div><span className="section-kicker">PLAYER SUBMISSION</span><h2>New expense claim</h2></div></div>
           {!canClaim ? <p className="muted">Claims require a roster-linked account and an open claim window. {canManage && !actor?.player_id ? "Link your account to a player in Administration to test submissions." : ""}</p> :
             <form className="form-grid" onSubmit={(e) => { e.preventDefault(); const receipt = (e.currentTarget.elements.namedItem("receipt") as HTMLInputElement).files?.[0] ?? null; void submitExpense(receipt); }}>
@@ -176,5 +195,5 @@ function ImpactPanel({ teamId, fees }: { teamId: string; fees: { leagueFee: stri
   const [preview, setPreview] = useState<{ baselinePoolCents: number; proposedPoolCents: number; unresolvedClaims: number; rows: Array<{ playerId: string; name: string; balanceDeltaCents: number }> } | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
-  return <section className="card"><div className="card-head"><div><span className="section-kicker">READ-ONLY IMPACT PREVIEW</span><h2>Before changing season rules</h2></div></div><p className="muted">Preview the current fee and multiplier fields above against the live settlement. This does not change any records.</p><button className="outline" disabled={loading} onClick={() => { setLoading(true); setError(""); void api<{ baselinePoolCents: number; proposedPoolCents: number; unresolvedClaims: number; rows: Array<{ playerId: string; name: string; balanceDeltaCents: number }> }>(`admin/teams/${teamId}/impact`, "POST", { leagueFeeCents: Math.round(Number(fees.leagueFee) * 100), umpireFeeCents: Math.round(Number(fees.umpireFee) * 100), multipliers: fees.multipliers.split(",").map((n) => Number(n.trim())) }).then(setPreview).catch((e) => setError(e.message)).finally(() => setLoading(false)); }}>Calculate impact</button>{error && <p className="muted">{error}</p>}{preview && <div className="impact-result"><p>Pool: <strong>{money(preview.baselinePoolCents)} → {money(preview.proposedPoolCents)}</strong> · Unresolved claims: {preview.unresolvedClaims}</p><div className="table-wrap"><table><thead><tr><th>Player</th><th>Net balance change</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.playerId}><td>{row.name}</td><td>{row.balanceDeltaCents >= 0 ? "+" : ""}{money(row.balanceDeltaCents)}</td></tr>)}</tbody></table></div></div>}</section>;
+  return <section className="card"><div className="card-head"><div><span className="section-kicker">READ-ONLY IMPACT PREVIEW</span><h2>Before changing season rules</h2></div></div><p className="muted">Multiplier values correspond, in order, to 0, 1, 2 … 10 games played. Defaults: 0 games = 0×; 1 = 0.5×; 2–3 = 0.75×; 4–6 = 1×; 7–10 = 1.25×. Each player’s allocation units are games played × that multiplier. The expense pool is split by units, then approved expense credits are subtracted. Preview the current fields above without changing records.</p><button className="outline" disabled={loading} onClick={() => { setLoading(true); setError(""); void api<{ baselinePoolCents: number; proposedPoolCents: number; unresolvedClaims: number; rows: Array<{ playerId: string; name: string; balanceDeltaCents: number }> }>(`admin/teams/${teamId}/impact`, "POST", { leagueFeeCents: Math.round(Number(fees.leagueFee) * 100), umpireFeeCents: Math.round(Number(fees.umpireFee) * 100), multipliers: fees.multipliers.split(",").map((n) => Number(n.trim())) }).then(setPreview).catch((e) => setError(e.message)).finally(() => setLoading(false)); }}>Calculate impact</button>{error && <p className="muted">{error}</p>}{preview && <div className="impact-result"><p>Pool: <strong>{money(preview.baselinePoolCents)} → {money(preview.proposedPoolCents)}</strong> · Unresolved claims: {preview.unresolvedClaims}</p><div className="table-wrap"><table><thead><tr><th>Player</th><th>Net balance change</th></tr></thead><tbody>{preview.rows.map((row) => <tr key={row.playerId}><td>{row.name}</td><td>{row.balanceDeltaCents >= 0 ? "+" : ""}{money(row.balanceDeltaCents)}</td></tr>)}</tbody></table></div></div>}</section>;
 }

@@ -43,7 +43,7 @@ export async function POST(request: NextRequest) {
       } else if (name === "answer_policy_question") {
         if (typeof args.question !== "string" || !args.question.trim()) throw new HttpError(400, "question required");
         const sections = await policySearch(args.question.slice(0, 500));
-        data = { answer: await answerPolicy(args.question.slice(0, 500), sections), citations: sections.map((s) => s.section_id) };
+        data = { answer: await answerPolicy(args.question.slice(0, 500), sections), citations: sections.map((s) => s.section_id), retrieval: sections[0]?.retrieval_method ?? "none" };
       } else throw new HttpError(404, "Unknown tool");
       result = { content: [{ type: "text", text: JSON.stringify(data) }] };
     } else return NextResponse.json({ jsonrpc: "2.0", id, error: { code: -32601, message: "Method not found" } });
