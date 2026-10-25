@@ -169,3 +169,39 @@ button { cursor: pointer; }
 @media(max-width:1100px){.grid-two { grid-template-columns: 1fr; }.form-grid.multi { grid-template-columns: repeat(2,1fr); }}
 @media(max-width:800px){.app-shell { grid-template-columns: 1fr; }.sidebar { position: static; height: auto; padding: 14px; }.brand { padding: 0 0 14px; }.sidebar nav { display: flex; overflow-x: auto; }.nav-item { width: auto; white-space: nowrap; }.side-caption,.side-bottom { display: none; }.topbar { padding: 0 18px; height: 48px; }.content { padding: 23px 17px; }.metrics { grid-template-columns: 1fr; }.page-heading { align-items: start; flex-direction: column; }.page-heading select { width: 100%; }.claim-actions,.card-footer { flex-direction: column; align-items: start; }.action-buttons { justify-content: start; }}
 @media(max-width:540px){.form-grid,.form-grid.multi { grid-template-columns: 1fr; }.form-grid .wide { grid-column: auto; }.bar-row { grid-template-columns: 90px 1fr 70px; }.top-right { display: none; }.card { padding: 17px; }.inline-form { flex-wrap: wrap; }}
+
+/* The primary navigation is horizontal at every viewport width. */
+.app-shell { display: flex; flex-direction: column; }
+.site-header { position: sticky; top: 0; z-index: 20; color: #e9f5f1; background: #102f31; box-shadow: 0 5px 18px #102f311c; }
+.header-upper { min-height: 68px; padding: 0 38px; display: flex; align-items: center; justify-content: space-between; gap: 20px; }
+.site-header .brand { padding: 0; flex-shrink: 0; }
+.header-account { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.private-label { display: inline-flex; align-items: center; gap: 7px; color: #b2d4c5; font-size: 11px; margin-right: 12px; white-space: nowrap; }
+.account-name { display: grid; gap: 2px; max-width: 190px; }
+.account-name strong { font-size: 12px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.account-name small { font-size: 11px; color: #a0bdbb; text-transform: capitalize; }
+.site-header .signout { margin: 0 0 0 8px; white-space: nowrap; }
+.horizontal-nav { display: flex; gap: 5px; align-items: center; padding: 0 33px; overflow-x: auto; scrollbar-width: thin; border-top: 1px solid #315250; }
+.horizontal-nav .nav-item { width: auto; flex: 0 0 auto; gap: 8px; padding: 13px 12px; border-radius: 8px 8px 0 0; white-space: nowrap; }
+.horizontal-nav .nav-item.active { box-shadow: inset 0 -3px #e8ba62; }
+.horizontal-nav .nav-item:focus-visible { outline: 2px solid #e8ba62; outline-offset: -3px; }
+.main-panel { flex: 1; }
+.technology-intro { display: flex; justify-content: space-between; align-items: center; gap: 25px; background: linear-gradient(120deg,#ffffff 55%,#eaf4ee); }
+.technology-intro p { max-width: 700px; font-size: 13px; color: #5b7770; margin-bottom: 0; }
+.technology-status { min-width: 230px; display: grid; gap: 8px; padding: 18px; border: 1px solid #cfe5da; border-radius: 10px; background: #fff; }
+.technology-status strong { color: #24463b; font-size: 14px; }
+.technology-status small { color: #728a7e; font-size: 11px; }
+.tech-badge { display: inline-flex; width: fit-content; border-radius: 30px; padding: 5px 9px; white-space: nowrap; font-size: 10px; font-weight: 800; letter-spacing: .02em; }
+.tech-badge.live { color: #176b4e; background: #ddf5e8; }
+.tech-badge.reference { color: #825f29; background: #fff0d5; }
+.tech-badge.planned { color: #596885; background: #e8eefb; }
+.technology-flow { display: flex; gap: 10px; overflow-x: auto; padding-bottom: 5px; }
+.technology-flow span { position: relative; flex: 1 0 150px; padding: 15px 17px; border: 1px solid #d5e7dd; background: #f3f8f5; border-radius: 9px; color: #31584a; font-size: 12px; font-weight: 700; }
+.technology-flow span:not(:last-child)::after { content: "→"; position: absolute; right: -10px; z-index: 1; color: #3c7f68; font-weight: 900; }
+.technology-table { min-width: 900px; }
+.technology-table td { vertical-align: top; line-height: 1.5; }
+.technology-table td:first-child { width: 20%; }
+.technology-table td:nth-child(2) { width: 33%; }
+.technology-table td:nth-child(3) { width: 37%; }
+@media(max-width:800px){.site-header { position: static; }.header-upper { padding: 12px 17px; }.horizontal-nav { padding: 0 10px; }.private-label { display: none; }.technology-intro { flex-direction: column; align-items: stretch; }.technology-status { min-width: 0; }}
+@media(max-width:540px){.account-name { display: none; }.header-account { gap: 7px; }.site-header .signout { margin-left: 0; font-size: 0; }.site-header .signout svg { width: 19px; height: 19px; }.site-header .brand strong { font-size: 16px; }.site-header .brand span { font-size: 8px; }}
